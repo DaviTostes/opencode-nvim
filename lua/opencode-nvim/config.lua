@@ -1,0 +1,128 @@
+local log = require("opencode-nvim.log")
+
+local M = {}
+
+---@class opencode.Config
+---@field server table
+---@field agent string
+---@field model? table
+---@field permissions table|table[]|false|nil
+---@field session table
+---@field context table
+---@field reload table
+---@field ui table
+---@field keymaps table
+---@field log table
+
+M.defaults = {
+  server = {
+    command = "opencode2",
+    autostart = true,
+    hostname = "127.0.0.1",
+    url = nil,
+    password = nil,
+    state_dir = nil,
+  },
+  agent = "build",
+  model = nil,
+  permissions = { edit = "ask", shell = "ask" },
+  approval = {
+    -- "popup": mostra o diff do turno com opção de desfazer; "notify" só avisa;
+    -- false desliga.
+    review = "popup",
+    -- Agente (definido no config do OpenCode) cujas regras pedem aprovação.
+    -- Se ele existir, as edições pausam e o diff é aprovado antes de gravar.
+    agent = "opencode-nvim",
+    -- Usa qualquer agente do servidor que peça aprovação para `edit`.
+    auto_detect = true,
+    -- Regras gravadas por `:OpencodeApprovalAgent`.
+    permissions = {
+      { action = "edit", resource = "*", effect = "ask" },
+      { action = "shell", resource = "*", effect = "ask" },
+    },
+  },
+  session = {
+    history = 30,
+    directory = nil,
+  },
+  context = {
+    auto = true,
+    max_bytes = 200 * 1024,
+    diff_max_lines = 300,
+    diagnostics_max = 50,
+  },
+  reload = {
+    enabled = true,
+    set_autoread = true,
+  },
+  ui = {
+    panel = { width = 0.45, height = 0.35, max_width = 110, max_height = 30, border = "rounded" },
+    input = { height = 4, border = "rounded" },
+    diff = { width = 0.85, height = 0.6, border = "rounded" },
+    focus_after_submit = "code",
+  },
+  keymaps = {
+    enabled = true,
+    toggle = "<leader>tt",
+    ask = "<leader>ta",
+    ask_buffer = "<leader>tA",
+    sessions = "<leader>ts",
+    models = "<leader>tm",
+    agents = "<leader>tg",
+    diff = "<leader>td",
+    interrupt = "<leader>tx",
+    undo = "<leader>tu",
+    events = "<leader>te",
+  },
+  log = { level = "warn", file = nil },
+}
+
+M.options = vim.deepcopy(M.defaults)
+
+---@param opts? table
+---@return table
+function M.setup(opts)
+  opts = opts or {}
+  local permissions = opts.permissions
+  M.options = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), opts)
+  if permissions ~= nil then M.options.permissions = permissions end
+  log.setup(M.options.log)
+  return M.options
+end
+
+---@return table
+function M.get()
+  return M.options
+end
+
+local BASE_POLICY = {
+  { action = "*", resource = "*", effect = "allow" },
+  { action = "external_directory", resource = "*", effect = "ask" },
+  { action = "read", resource = "*.env", effect = "ask" },
+  { action = "read", resource = "*.env.*", effect = "ask" },
+  { action = "read", resource = "*.env.example", effect = "allow" },
+}
+
+--- Ruleset sent when creating a session.
+---
+--- A plain map (`{ edit = "ask" }`) is expanded on top of a copy of the
+--- OpenCode base policy, and an array is used verbatim. Both shapes work
+--- whether the server appends or replaces the session ruleset.
+---@return table[]|nil
+function M.permission_ruleset()
+  local permissions = M.options.permissions
+  if permissions == nil or permissions == false then return nil end
+
+  if type(permissions) ~= "table" then return nil end
+  if permissions[1] ~= nil then return permissions end
+
+  local rules = vim.deepcopy(BASE_POLICY)
+  local actions = vim.tbl_keys(permissions)
+  table.sort(actions)
+  for _, action in ipairs(actions) do
+    rules[#rules + 1] = { action = action, resource = "*", effect = permissions[action] }
+  end
+  return rules
+end
+
+return M

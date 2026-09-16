@@ -1,0 +1,339 @@
+*opencode-nvim.txt*	Usa o OpenCode de dentro do Neovim, sem perder o código de vista
+
+==============================================================================
+CONTENTS					*opencode-nvim-contents*
+
+  1. Introdução ....................................... |opencode-nvim-intro|
+  2. Requisitos ................................... |opencode-nvim-requirements|
+  3. Instalação ................................... |opencode-nvim-install|
+  4. Configuração ................................. |opencode-nvim-config|
+  5. Comandos ..................................... |opencode-nvim-commands|
+  6. Keymaps ...................................... |opencode-nvim-keymaps|
+  7. Contexto (@this, @buffer, ...) ................ |opencode-nvim-context|
+  8. Aprovação e diff ............................. |opencode-nvim-approval|
+  9. API Lua ...................................... |opencode-nvim-api|
+  10. Eventos ..................................... |opencode-nvim-events|
+  11. Solução de problemas ........................ |opencode-nvim-troubleshooting|
+
+==============================================================================
+1. Introdução						*opencode-nvim-intro*
+
+opencode-nvim é um painel flutuante para conversar com o OpenCode V2
+(`opencode2`) de dentro do Neovim. A conversa aparece num float ancorado no
+canto inferior direito que *não* rouba o foco: você continua vendo e editando
+o código enquanto a resposta chega em streaming.
+
+O plugin fala direto com o servidor HTTP do OpenCode (o mesmo serviço de
+fundo que o TUI usa), então as sessões são compartilhadas com o `opencode2` e
+o servidor já está quente quando você abre o Neovim.
+
+Recursos:
+  - Streaming de texto, raciocínio e chamadas de ferramenta no painel.
+  - Aprovação de edições com diff dentro do editor, sem sair do Neovim.
+  - Recarga automática dos buffers alterados pela IA, preservando o cursor.
+  - Contexto do editor com `@this`, `@buffer`, `@buffers`, `@diagnostics` e
+    `@diff`.
+  - Zero dependências obrigatórias (só o que já vem no Neovim).
+
+==============================================================================
+2. Requisitos					*opencode-nvim-requirements*
+
+  - Neovim 0.11 ou mais novo (usa `vim.uv`, `vim.json`, `vim.base64`,
+    `vim.fs`).
+  - OpenCode V2 instalado como `opencode2` no `PATH`.
+  - O serviço de fundo do OpenCode (`opencode2 serve` / serviço
+    compartilhado). O plugin sobe um se não houver nenhum.
+
+==============================================================================
+3. Instalação						*opencode-nvim-install*
+
+Com `vim.pack`: >lua
+
+  vim.pack.add({ { src = "https://github.com/<voce>/opencode-nvim" } })
+  require("opencode-nvim").setup({})
+<
+
+Para desenvolvimento local (aponta direto para o diretório do repositório): >lua
+
+  vim.opt.rtp:prepend("/home/toast/toaster")
+  require("opencode-nvim").setup({})
+<
+
+Sem chamar `setup()`, o plugin se configura sozinho com os valores padrão no
+`VimEnter`.
+
+==============================================================================
+4. Configuração					*opencode-nvim-config*
+
+>lua
+  require("opencode-nvim").setup({
+    server = {
+      command = "opencode2",   -- binário usado para subir o serviço
+      autostart = true,        -- sobe o serviço se não houver nenhum
+      url = nil,               -- força um servidor (ex: "http://127.0.0.1:4094")
+      password = nil,          -- força a senha (padrão: service.json)
+      state_dir = nil,         -- diretório do service.json
+    },
+    agent = "build",           -- agente padrão das sessões novas
+    model = nil,               -- { id = "...", providerID = "...", variant = "..." }
+    permissions = {            -- regras enviadas na criação da sessão
+      edit = "ask",            -- (a beta V2 ignora isso: veja |opencode-nvim-approval|)
+      shell = "ask",
+    },
+    approval = {
+      review = "popup",        -- "popup" | "notify" | false
+      agent = "opencode-nvim", -- agente cujas regras pedem aprovação
+      auto_detect = true,      -- usa qualquer agente que peça aprovação
+    },
+    session = { history = 30, directory = nil },
+    context = {
+      auto = true,             -- pergunta feita a partir de seleção vira @this
+      max_bytes = 204800,      -- limite para anexar buffer não salvo
+      diff_max_lines = 300,
+      diagnostics_max = 50,
+    },
+    reload = { enabled = true, set_autoread = true },
+    ui = {
+      panel = { width = 0.45, height = 0.35, max_width = 110, max_height = 30, border = "rounded" },
+      input = { height = 4, border = "rounded" },
+      diff = { width = 0.85, height = 0.6, border = "rounded" },
+      focus_after_submit = "code",   -- "code" | "panel" | "input"
+    },
+    keymaps = {
+      enabled = true,
+      toggle = "<leader>tt",
+      ask = "<leader>ta",
+      ask_buffer = "<leader>tA",
+      sessions = "<leader>ts",
+      models = "<leader>tm",
+      agents = "<leader>tg",
+      diff = "<leader>td",
+      interrupt = "<leader>tx",
+      undo = "<leader>tu",
+      events = "<leader>te",
+    },
+    log = { level = "warn", file = nil },
+  })
+<
+
+==============================================================================
+5. Comandos					*opencode-nvim-commands*
+
+:Opencode					*:Opencode*
+	Abre/fecha o painel e foca o prompt.
+:OpencodeAsk [texto]				*:OpencodeAsk*
+	Abre o prompt já preenchido. A partir de uma seleção, inclui `@this`.
+:OpencodeNew					*:OpencodeNew*
+	Começa uma sessão nova no diretório atual.
+:OpencodeAttach {id}				*:OpencodeAttach*
+	Anexa uma sessão existente (inclusive uma aberta no TUI).
+:OpencodeSessions				*:OpencodeSessions*
+	Escolhe uma sessão do diretório atual.
+:OpencodeModels					*:OpencodeModels*
+	Escolhe o modelo da sessão.
+:OpencodeAgents					*:OpencodeAgents*
+	Escolhe o agente da sessão.
+:OpencodeInterrupt				*:OpencodeInterrupt*
+	Interrompe a execução em andamento.
+:OpencodeUndo					*:OpencodeUndo*
+	Desfaz o último turno da IA (revert) e restaura os arquivos.
+:OpencodeDiff					*:OpencodeDiff*
+	Mostra o diff do último turno (ou do working tree).
+:OpencodeApproval				*:OpencodeApproval*
+	Mostra quais agentes pedem aprovação e como está a configuração.
+:OpencodeApprovalAgent				*:OpencodeApprovalAgent*
+	Cria o agente de aprovação no config global do OpenCode.
+:OpencodePermissions				*:OpencodePermissions*
+	Decide permissões que ficaram pendentes (a execução fica pausada).
+:OpencodeEvents					*:OpencodeEvents*
+	Inspeciona os eventos recebidos do servidor (útil para depurar).
+:OpencodeHealth					*:OpencodeHealth*
+	Checa conexão, autenticação e sessão atual.
+:OpencodeLog [nivel]				*:OpencodeLog*
+	Lê/define o nível de log (debug, info, warn, error).
+
+==============================================================================
+6. Keymaps					*opencode-nvim-keymaps*
+
+  <leader>tt	alterna o painel
+  <leader>ta	pergunta (visual: usa a seleção como `@this`)
+  <leader>tA	pergunta com `@buffer`
+  <leader>ts	escolhe sessão
+  <leader>tm	escolhe modelo
+  <leader>tg	escolhe agente
+  <leader>td	diff do último turno
+  <leader>tx	interrompe
+  <leader>tu	desfaz o último turno
+  <leader>te	eventos
+
+Dentro do painel:
+  i, a, <CR>	abre o prompt
+  q, <Esc>	fecha o painel
+  <C-c>		interrompe
+  gd		diff do último turno
+
+Dentro do prompt:
+  <CR>		envia
+  <C-j>		nova linha
+  <C-x><C-o>	completa arquivos e placeholders (@this, @buffer, ...)
+  <Esc>		fecha sem enviar
+  <C-c>		cancela a pergunta atual
+
+No popup de permissão/diff:
+  <CR>		permite uma vez
+  a		permite sempre (salva a regra)
+  n		rejeita (com mensagem opcional)
+  <Esc>		decide depois (a execução fica pausada)
+
+==============================================================================
+7. Contexto					*opencode-nvim-context*
+
+Dentro do prompt, estes marcadores são expandidos antes do envio: >
+
+  @this		linha atual, ou a seleção visual se o prompt veio dela
+  @buffer	arquivo atual (buffer não salvo vai como anexo)
+  @buffers	arquivos abertos
+  @diagnostics	diagnósticos do buffer/intervalo
+  @diff		git diff do diretório da sessão
+
+Exemplo: `@this transforma isso numa função local`.
+
+Com `context.auto = true`, abrir o prompt a partir de uma seleção visual já
+preenche `@this ` no começo do texto.
+
+==============================================================================
+8. Aprovação e diff				*opencode-nvim-approval*
+
+O plugin quer que nada seja escrito no disco sem você ver, e faz isso em dois
+níveis:
+
+1. Pré-aprovação (o ideal). Se existir um agente cujas regras pedem aprovação
+   para `edit`, a execução pausa e o diff da proposta aparece no Neovim; só
+   depois do seu `<CR>` o arquivo é gravado. O plugin detecta esse agente
+   sozinho. Para criar um, use `:OpencodeApprovalAgent`, que grava isto no
+   config global do OpenCode (`~/.config/opencode/opencode.json`): >
+
+     {
+       "agents": {
+         "opencode-nvim": {
+           "description": "OpenCode dentro do Neovim: pede aprovação antes de editar",
+           "mode": "primary",
+           "permissions": [
+             { "action": "edit", "resource": "*", "effect": "ask" },
+             { "action": "shell", "resource": "*", "effect": "ask" }
+           ]
+         }
+       }
+     }
+<
+   Depois rode `opencode2 service restart`. Veja o estado com
+   `:OpencodeApproval`.
+
+2. Revisão depois do turno (funciona sem config nenhuma). Ao terminar um turno
+   que mexeu em arquivos, o diff aparece num popup: >
+
+     <CR> manter       r desfazer o turno       <Esc> fechar
+<
+   `:OpencodeUndo` faz o mesmo de fora do popup.
+
+No popup de permissão: >
+
+  <CR> permitir uma vez
+  a    permitir sempre (salva a regra no projeto)
+  n    rejeitar (com mensagem opcional)
+  <Esc> decidir depois (o turno fica pausado; veja :OpencodePermissions)
+<
+
+As regras do agente valem só para as sessões do plugin; o TUI mantém o
+comportamento normal dele.
+
+Para ajustar: >
+
+  approval = { review = "notify" }   -- só avisa, sem popup
+  approval = { review = false }      -- sem revisão depois do turno
+  approval = { auto_detect = false, agent = "meu-agente" }
+<
+Edições aprovadas são gravadas e os buffers abertos recarregam sozinhos
+(`reload.enabled`); o `undo` do Neovim continua valendo no buffer.
+
+NOTA: desfazer um turno (restaurar arquivos) e o diff de um turno dependem dos
+snapshots do OpenCode, que usam git. Fora de um repositório git o plugin cai
+para o diff do working tree e avisa que os arquivos não foram restaurados.
+
+==============================================================================
+9. API Lua					*opencode-nvim-api*
+
+require("opencode-nvim").setup(opts)		*opencode-nvim.setup()*
+	Configura o plugin.
+
+require("opencode-nvim").toggle()		*opencode-nvim.toggle()*
+	Abre/fecha o painel.
+
+require("opencode-nvim").prompt(text, opts)	*opencode-nvim.prompt()*
+	Envia `text` (com placeholders expandidos) para a sessão atual.
+	opts: `files`, `delivery` ("steer" para corrigir em execução),
+	`new_session`.
+
+require("opencode-nvim").ask()			*opencode-nvim.ask()*
+	Abre o prompt.
+
+require("opencode-nvim").interrupt()		*opencode-nvim.interrupt()*
+	Interrompe a execução.
+
+require("opencode-nvim").diff()			*opencode-nvim.diff()*
+	Mostra o diff do último turno.
+
+require("opencode-nvim").statusline()		*opencode-nvim.statusline()*
+	String curta para a statusline (modelo, tokens, custo).
+
+require("opencode-nvim").status()		*opencode-nvim.status()*
+	Tabela com o estado atual.
+
+==============================================================================
+10. Eventos					*opencode-nvim-events*
+
+Cada evento do servidor dispara um autocomando `User`: >
+
+  OpencodeEvent:{tipo}   -- ex: OpencodeEvent:session.text.delta
+  OpencodeEvent         -- todos
+  OpencodeSessionChanged -- quando a sessão atual muda
+<
+
+Exemplo: >
+
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "OpencodeEvent:permission.asked",
+    callback = function(args) vim.notify("permissão pedida") end,
+  })
+<
+
+==============================================================================
+11. Solução de problemas			*opencode-nvim-troubleshooting*
+
+  - `:checkhealth opencode-nvim` mostra o estado da descoberta do serviço.
+  - `:OpencodeHealth` faz uma checagem ao vivo (conexão + autenticação).
+  - `:OpencodeEvents` mostra o que está chegando do servidor.
+  - `:OpencodeApproval` mostra se existe agente pedindo aprovação.
+  - `log = { level = "debug", file = "/tmp/opencode-nvim.log" }` grava tudo.
+  - Se as edições não recarregarem, verifique `'autoread'` e `reload.enabled`.
+  - Se o serviço não for encontrado, confira `server.command` e se o
+    `opencode2` está no `PATH`.
+  - Se o diff/undo não restaurar arquivos, o diretório não é um repositório
+    git (os snapshots do OpenCode usam git).
+
+Estas divergências do beta V2 já estão tratadas no plugin, mas ajudam a
+entender logs estranhos:
+
+  - `permissions` em `POST /api/session` é ignorado pelo servidor; a aprovação
+    real vem das regras do agente.
+  - O reply de permissão espera a chave `reply` (o OpenAPI diz `decision`); o
+    plugin manda `reply` e cai para `decision` se receber 400.
+  - `GET /api/agent` é por location e só fica completo depois que a location
+    é carregada; por isso o plugin chama `GET /api/location` antes e
+    reconsulta.
+  - `GET /api/session/{id}/diff` responde 404 de rota nessa build; o plugin usa
+    `GET /api/vcs/diff?mode=working` como fallback.
+  - Não existe `session.idle` num turno normal: o fim do turno é
+    `session.execution.succeeded` (ou `failed`/`interrupted`).
+
+vim:tw=78:ts=8:ft=help:norl:

@@ -1,0 +1,161 @@
+local cfg = require("opencode-nvim.config")
+local log = require("opencode-nvim.log")
+local util = require("opencode-nvim.util")
+
+--- Turns editor state into prompt text and file attachments.
+---
+--- Supported placeholders in a prompt: `@this`, `@buffer`, `@buffers`,
+--- `@diagnostics` and `@diff`.
+local M = {}
+
+--- Visual range (1-based, inclusive) captured when the prompt was opened.
+---@return { bufnr: integer, first: integer, last: integer }?
+function M.selection()
+  local first = vim.fn.getpos("'<")
+  local last = vim.fn.getpos("'>")
+  local bufnr = vim.api.nvim_get_current_buf()
+  if first[2] == 0 or last[2] == 0 then return nil end
+  local first_line, last_line = first[2], last[2]
+  if first_line > last_line then first_line, last_line = last_line, first_line end
+  return { bufnr = bufnr, first = first_line, last = last_line }
+end
+
+local function target_buf(opts)
+  local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(bufnr) then bufnr = vim.api.nvim_get_current_buf() end
+  return bufnr
+end
+
+local function range_of(opts)
+  if opts.range then return opts.range.first, opts.range.last, opts.range.bufnr end
+  local bufnr = target_buf(opts)
+  local selection = opts.selection
+  if selection and selection.bufnr == bufnr then
+    return selection.first, selection.last, selection.bufnr
+  end
+  if opts.line then return opts.line, opts.line, bufnr end
+  return nil, nil, nil
+end
+
+local function fenced(name, lines, filetype)
+  local out = { string.format("`%s`", name), "```" .. (filetype or "") }
+  vim.list_extend(out, lines)
+  out[#out + 1] = "```"
+  return table.concat(out, "\n")
+end
+
+local function directory(opts)
+  local session = require("opencode-nvim.session")
+  return opts.directory or session.directory()
+end
+
+local function fmt_this(opts)
+  local bufnr = target_buf(opts)
+  local first, last = range_of(opts)
+  if not first then
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    first, last = cursor[1], cursor[1]
+  end
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  local label = name ~= "" and util.relative(name, directory(opts)) or "[sem nome]"
+  local location = first == last and string.format("%s:%d", label, first)
+    or string.format("%s:%d-%d", label, first, last)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, first - 1, last, false)
+  return fenced(location, lines, vim.bo[bufnr].filetype)
+end
+
+local function fmt_buffer(opts, files)
+  local bufnr = target_buf(opts)
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  if name == "" then return "" end
+  local label = util.relative(name, directory(opts))
+  if not vim.bo[bufnr].modified then
+    return "@" .. label
+  end
+
+  local contents = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+  local limit = cfg.get().context.max_bytes
+  if #contents > limit then
+    log.warn(string.format("%s tem %d bytes; vou mencionar o arquivo em vez de anexar", label, #contents))
+    return "@" .. label
+  end
+  files[#files + 1] = {
+    uri = "data:text/plain;base64," .. vim.base64.encode(contents),
+    name = label,
+  }
+  return string.format("[anexo não salvo: %s]", label)
+end
+
+local function fmt_buffers(opts)
+  local out = {}
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buflisted then
+      local name = vim.api.nvim_buf_get_name(bufnr)
+      if name ~= "" then
+        out[#out + 1] = "@" .. util.relative(name, directory(opts))
+      end
+      if #out >= 20 then break end
+    end
+  end
+  if #out == 0 then return "(nenhum arquivo aberto)" end
+  return table.concat(out, ", ")
+end
+
+local SEVERITY = { "ERROR", "WARN", "INFO", "HINT" }
+
+local function fmt_diagnostics(opts)
+  local bufnr = target_buf(opts)
+  local first, last = range_of(opts)
+  local items = vim.diagnostic.get(bufnr)
+  local out = {}
+  local max = cfg.get().context.diagnostics_max
+  for _, item in ipairs(items) do
+    if not first or (item.lnum + 1) >= first and (item.lnum + 1) <= last then
+      out[#out + 1] = string.format("%s:%d:%d %s %s",
+        util.relative(vim.api.nvim_buf_get_name(bufnr), directory(opts)),
+        item.lnum + 1, item.col + 1,
+        SEVERITY[item.severity] or "INFO",
+        (item.message or ""):gsub("\n", " "))
+      if #out >= max then break end
+    end
+  end
+  if #out == 0 then return "(sem diagnósticos)" end
+  return table.concat(out, "\n")
+end
+
+local function fmt_diff(opts)
+  local dir = directory(opts)
+  local lines = vim.fn.systemlist({ "git", "-C", dir, "diff", "--no-color" })
+  if vim.v.shell_error ~= 0 or #lines == 0 then return "(sem alterações)" end
+  lines = util.truncate_lines(lines, cfg.get().context.diff_max_lines)
+  return "```diff\n" .. table.concat(lines, "\n") .. "\n```"
+end
+
+--- Expand placeholders in `text`.
+---@param text string
+---@param opts? { bufnr?: integer, selection?: table, range?: table, directory?: string }
+---@return string text
+---@return table[] files
+function M.expand(text, opts)
+  opts = opts or {}
+  local files = {}
+
+  local expanded = text:gsub("@(%w+)", function(name)
+    if name == "this" then
+      return fmt_this(opts)
+    elseif name == "buffer" then
+      return fmt_buffer(opts, files)
+    elseif name == "buffers" then
+      return fmt_buffers(opts)
+    elseif name == "diagnostics" then
+      return fmt_diagnostics(opts)
+    elseif name == "diff" then
+      return fmt_diff(opts)
+    end
+    return "@" .. name
+  end)
+
+  return expanded, files
+end
+
+return M
