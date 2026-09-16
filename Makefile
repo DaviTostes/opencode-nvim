@@ -16,6 +16,9 @@ e2e-approval:
 probe:
 	$(NVIM) -l tests/probe_permissions.lua
 
+e2e-panel:
+	$(NVIM) -l tests/e2e_panel.lua
+
 lint:
 	$(NVIM) --headless -c "lua vim.tbl_map(function(f) local c, e = loadfile(f); if not c then print('SYNTAX '..f..': '..tostring(e)) end end, vim.fn.glob('lua/**/*.lua', false, true))" -c "qa!"
 

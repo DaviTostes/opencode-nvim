@@ -70,7 +70,12 @@ end
 --- config has been read, so `wait_for` (an agent id) makes this retry until
 --- that agent shows up.
 local function agents_for(directory, cb, wait_for)
-  local attempts = wait_for and 8 or 1
+  local cached = agents_cache[directory]
+  if cached and (not wait_for or find_agent(cached, wait_for)) then
+    return cb(nil, cached)
+  end
+
+  local attempts = wait_for and 5 or 1
 
   local function attempt(index)
     api.ensure_location(directory, function()
@@ -79,12 +84,12 @@ local function agents_for(directory, cb, wait_for)
           if index < attempts then
             return vim.defer_fn(function() attempt(index + 1) end, 250)
           end
-          return cb(err, nil)
+          return cb(err, cached)
         end
+        if #agents > #(cached or {}) then agents_cache[directory] = agents end
         if wait_for and not find_agent(agents, wait_for) and index < attempts then
           return vim.defer_fn(function() attempt(index + 1) end, 250)
         end
-        if #agents > 0 then agents_cache[directory] = agents end
         cb(nil, agents)
       end)
     end)
@@ -170,9 +175,12 @@ end
 --- agent can be re-checked and switched to an approval agent when one exists.
 local function finalize_agent(info, cb)
   local directory = info.location and info.location.directory or M.directory()
-  local wanted = info.agent
+  local approval = cfg.get().approval or {}
+  -- Wait for whichever agent tells us the location's config has been read.
+  local wait_for = info.agent or approval.agent or cfg.get().agent
+
   agents_for(directory, function(_, agents)
-    local current = find_agent(agents, wanted)
+    local current = find_agent(agents, info.agent)
     if current and agent_asks_for_edit(current) then
       info.approval = true
       M.set_current(info)
@@ -200,7 +208,7 @@ local function finalize_agent(info, cb)
     info.approval = false
     M.set_current(info)
     cb(nil, info)
-  end, wanted)
+  end, wait_for)
 end
 
 ---@param opts? { directory?: string, agent?: string, model?: table, title?: string, force?: boolean }
@@ -217,11 +225,13 @@ function M.ensure(opts, cb)
   end
 
   local approval = cfg.get().approval or {}
-  local agent = opts.agent
-  if not agent then
-    -- Try the configured approval agent even on a cold location: session
-    -- creation loads the project config, so the name resolves there.
-    agent = M.pick_agent(cached_agents(directory)) or (approval.agent)
+  local agent = opts.agent or M.pick_agent(cached_agents(directory))
+  -- NOTE: never *speculate* the approval agent name here. The server accepts an
+  -- unknown agent at creation time and only fails when the turn runs
+  -- ("Agent not found"). `finalize_agent` switches the session to it once the
+  -- location is loaded and we know it exists.
+  if not agent and approval.agent and find_agent(cached_agents(directory), approval.agent) then
+    agent = approval.agent
   end
 
   create_session(directory, agent, opts, false, function(err, info)

@@ -189,13 +189,29 @@ test("review popup offers revert", function()
   assert(reverted, "a tecla r não chamou on_revert")
 end)
 
-test("opens the panel window", function()
-  local ok, err = pcall(plugin.open, { input = false })
-  if not ok then return report("opens the panel window", false, err) end
+test("opens the panel window and the prompt", function()
+  local ok, err = pcall(plugin.open)
+  if not ok then return report("opens the panel window and the prompt", false, err) end
   assert(panel.visible(), "janela do painel não abriu")
+  assert(panel.state.input.win ~= nil, "janela do prompt não abriu")
+  assert(vim.api.nvim_get_current_win() == panel.state.input.win, "o prompt não recebeu o foco")
+  -- Obs: com `-l` (sem UI) o Neovim não entra em insert mode, então o modo não
+  -- pode ser verificado aqui.
   plugin.close()
   settle(60)
   assert(not panel.visible(), "janela do painel não fechou")
+end)
+
+test("submitting goes back to the code window", function()
+  local target = panel.code_target()
+  assert(target and target.win, "não achei uma janela de código")
+  panel.open()
+  assert(panel.state.input.win ~= nil)
+  panel.close_input()
+  panel.state.input.target = target
+  panel.after_submit()
+  assert(vim.api.nvim_get_current_win() == target.win, "o foco não voltou para o código")
+  plugin.close()
 end)
 
 io.write(string.format("\n%d falha(s)\n", failures))

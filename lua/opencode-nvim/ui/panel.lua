@@ -294,9 +294,9 @@ function M.update_input_win()
   local ui = cfg.get().ui.input or {}
   local config = {
     relative = "editor",
-    anchor = "S",
+    anchor = "SW",
     row = vim.o.lines - 2,
-    col = math.max(0, vim.o.columns - 2 - math.floor(width / 2)),
+    col = math.max(0, vim.o.columns - 2 - width),
     width = width,
     height = M.input_height(),
     style = "minimal",
@@ -399,6 +399,23 @@ function M.submit()
   end
   M.close_input()
   M.send(text, { target = target, selection = selection })
+  M.after_submit()
+end
+
+--- Where the cursor goes after sending: back to the code (default), to the
+--- panel, or to a fresh prompt.
+function M.after_submit()
+  local mode = (cfg.get().ui or {}).focus_after_submit or "code"
+  if mode == "input" then
+    return M.open_input()
+  end
+  if mode == "panel" then
+    return M.focus()
+  end
+  local target = state.input.target
+  if target and target.win and vim.api.nvim_win_is_valid(target.win) then
+    pcall(vim.api.nvim_set_current_win, target.win)
+  end
 end
 
 --------------------------------------------------------------------------------
@@ -697,7 +714,32 @@ function M.on_event(ev)
     vim.defer_fn(M.review_turn, 150)
   elseif kind == "session.execution.failed" then
     M.set_status("error")
-    renderer:error(util.pick_string(data, { "message", "error", "text" }) or "execução falhou")
+    local message = util.deep_find(data, { "message" })
+    if message then
+      renderer:error(tostring(message))
+    else
+      renderer:error("execução falhou")
+      -- The reason lives in the assistant message, not in the event.
+      if session.id() then
+        api.messages(session.id(), { limit = 5, order = "desc" }, function(err, page)
+          if err then return end
+          for _, msg in ipairs((type(page) == "table" and page.data) or {}) do
+            if msg.type == "assistant" then
+              local reason = util.deep_find(msg.error, { "message", "type" })
+              if not reason and msg.finish == "error" then reason = msg.rawFinish end
+              if reason then
+                renderer:error(tostring(reason))
+                -- An unknown agent is accepted at creation but fails here.
+                if tostring(reason):find("Agent not found", 1, true) then
+                  session.reset_agents()
+                end
+              end
+              return
+            end
+          end
+        end)
+      end
+    end
   elseif kind == "session.error" then
     renderer:error(util.pick_string(data, { "message", "error", "text" }) or "erro na sessão")
   elseif kind == "session.retry.scheduled" then
