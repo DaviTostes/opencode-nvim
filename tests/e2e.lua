@@ -15,7 +15,12 @@ vim.opt.rtp:prepend(root)
 local api = require("opencode-nvim.api")
 local discovery = require("opencode-nvim.discovery")
 local event = require("opencode-nvim.event")
+local session = require("opencode-nvim.session")
 local util = require("opencode-nvim.util")
+
+-- The server default model can be a free-tier one that refuses to run; the
+-- plugin resolves the model, so mirror that here.
+local preferred_model = require("opencode-nvim.session").preferred_model()
 
 local dump_path = os.getenv("E2E_DUMP") or "/tmp/opencode/e2e-events.json"
 local workdir = os.getenv("E2E_DIR") or vim.fs.joinpath(vim.fn.tempname())
@@ -150,6 +155,7 @@ step("create text session (agent=plan)", function(cb)
   api.create_session({
     location = { directory = workdir },
     agent = "plan",
+    model = preferred_model,
     permissions = {
       { action = "*", resource = "*", effect = "allow" },
       { action = "edit", resource = "*", effect = "ask" },
@@ -190,6 +196,7 @@ if with_tools then
     api.create_session({
       location = { directory = workdir },
       agent = "build",
+      model = preferred_model,
       permissions = {
         { action = "*", resource = "*", effect = "allow" },
         { action = "edit", resource = "*", effect = "ask" },
