@@ -73,7 +73,7 @@ function M.create_commands()
   command("Opencode", function() M.toggle() end, { desc = "toggle the opencode panel" })
   command("OpencodeAsk", function(args)
     local prefill = args.args ~= "" and args.args or nil
-    M.ask(prefill, M.range_from_args(args))
+    M.ask(prefill, M.range_from_args(args), { fresh = true })
   end, { nargs = "*", range = true, desc = "ask opencode (range: uses the selection)" })
   command("OpencodeNew", function() M.new_session() end, { desc = "new opencode session" })
   command("OpencodeAttach", function(args)
@@ -190,9 +190,13 @@ function M.close()
   panel.close()
 end
 
-function M.ask(prefill, selection)
+---@param prefill? string
+---@param selection? { bufnr: integer, first: integer, last: integer }
+---@param opts? { fresh?: boolean }
+function M.ask(prefill, selection, opts)
   M._autosetup()
-  panel.open({ prefill = prefill, selection = selection })
+  opts = opts or {}
+  panel.open({ prefill = prefill, selection = selection, fresh = opts.fresh })
 end
 
 --- Selection opened by a `:Opencode...` command used with a range (from visual
@@ -265,7 +269,7 @@ function M.choose_action()
     if not choice then return end
     for _, action in ipairs(M.actions) do
       if action.label == choice then
-        return M.ask(action.prompt .. "\n")
+        return M.ask(action.prompt .. "\n", nil, { fresh = true })
       end
     end
   end)
@@ -275,7 +279,7 @@ end
 --- approval flow, so nothing is written before you see the diff.
 function M.edit_this(selection)
   M._autosetup()
-  M.ask("@this\n\nEdit the code above as follows: ", selection)
+  M.ask("@this\n\nEdit the code above as follows: ", selection, { fresh = true })
 end
 
 function M.select_session()

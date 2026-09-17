@@ -27,10 +27,14 @@ Local development: `vim.opt.rtp:prepend("/home/toast/opencode-nvim")`.
 ## Quick start
 
 ```
-:Opencode          open the panel and the prompt
+:Opencode          open the panel with an empty prompt
 type, then <CR>    send
 <Esc>              close the prompt and the panel
 ```
+
+Every command opens a **fresh, empty prompt** (`:OpencodeAsk`, `:OpencodeEdit`
+and `:OpencodeActions` fill in what they need). The `i` key inside the panel is
+the one that keeps the draft you were typing.
 
 That is the whole loop. No keymaps are installed by default; if you want them,
 list exactly the ones you want (mapping happens when `setup()` runs, so
@@ -107,9 +111,12 @@ require("opencode-nvim").setup({
   the block folded right below it; `zo` opens one, `zR` opens all. Answers are
   never buried in thinking.
 - **Share with the TUI.** `:OpencodeSessions` (or `:OpencodeAttach ses_...`)
-  attaches to any session, including one already running in the terminal.
+  attaches to any session, including one already running in the terminal. The
+  panel only renders the session it is attached to, so a TUI session in another
+  terminal never bleeds into it.
 - **In the panel:** `i`/`a`/`<CR>` prompt · `q`/`<Esc>` close · `<C-c>`
-  interrupt · `gd` diff · `r` resend · `G` go to the end.
+  interrupt · `gd` diff · `r` resend · `G` go to the end. The panel lists those
+  keys in its own footer, so you are never stuck looking at a box.
 - **In the popups:** `<CR>`/`y` allow once · `A` allow always · `x` reject ·
   `<Esc>`/`q` later. They are normal buffers — `j`/`k`, `<C-d>`, `/` and `gg`
   work, and the keys are listed in the footer.

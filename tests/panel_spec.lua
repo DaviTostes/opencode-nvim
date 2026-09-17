@@ -117,6 +117,18 @@ test("ignores events from other sessions", function()
   feed("session.text.delta", { delta = "MUST NOT APPEAR", sessionID = "ses_other" })
   settle()
   assert(panel_text() == before, "event from another session leaked into the panel")
+
+  -- and nothing at all when the plugin has no session yet (a TUI session in
+  -- another terminal used to stream into this panel)
+  local session = require("opencode-nvim.session")
+  local saved = session.current
+  session.current = nil
+  local empty = panel_text()
+  feed("session.text.delta", { delta = "TUI LEAK", sessionID = "ses_tui" })
+  event.emit({ type = "session.text.delta", data = { delta = "TUI LEAK" } })
+  settle()
+  assert(panel_text() == empty, "an event leaked while there was no session")
+  session.current = saved
 end)
 
 test("ignores catalog events", function()
@@ -460,6 +472,18 @@ test("reasoning around a tool call stays in one block", function()
   assert(not text:find("▸ The", 1, true), "the reasoning fragment leaked as a header:\n" .. text)
 end)
 
+test("the panel advertises its keys", function()
+  plugin.open({ input = false })
+  local footer = vim.api.nvim_win_get_config(panel.state.win).footer or {}
+  local text = ""
+  for _, line in ipairs(footer) do
+    text = text .. (type(line) == "table" and table.concat(line) or tostring(line))
+  end
+  assert(text:find("prompt", 1, true) and text:find("close", 1, true),
+    "the panel footer does not list the keys: " .. vim.inspect(footer))
+  plugin.close()
+end)
+
 test("a fresh session does not wipe the panel", function()
   local session = require("opencode-nvim.session")
   local saved_current, saved_sid = session.current, panel.state.session_id
@@ -545,6 +569,37 @@ test("no keymaps are created unless asked for", function()
   assert(range_info and range_info.range ~= nil and range_info.range ~= "",
     "OpencodeAsk does not accept a range: " .. vim.inspect(range_info and range_info.range))
   plugin.setup({})
+end)
+
+test("a command starts with an empty prompt", function()
+  -- OpencodeEdit pre-fills its template
+  vim.cmd("OpencodeEdit")
+  settle()
+  local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.input.buf, 0, -1, false), "\n")
+  assert(text:find("Edit the code above", 1, true), text)
+  panel.close_input()
+
+  -- OpencodeAsk must not inherit that draft
+  vim.cmd("OpencodeAsk")
+  settle()
+  text = table.concat(vim.api.nvim_buf_get_lines(panel.state.input.buf, 0, -1, false), "\n")
+  assert(text == "", "the draft leaked into :OpencodeAsk: " .. vim.inspect(text))
+  plugin.close()
+
+  -- nor must :Opencode
+  vim.cmd("Opencode")
+  settle()
+  text = table.concat(vim.api.nvim_buf_get_lines(panel.state.input.buf, 0, -1, false), "\n")
+  assert(text == "", "the draft leaked into :Opencode: " .. vim.inspect(text))
+
+  -- the in-panel key keeps the draft on purpose
+  vim.api.nvim_buf_set_lines(panel.state.input.buf, 0, -1, false, { "meu rascunho" })
+  panel.close_input()
+  panel.open_input(nil, nil, false)
+  settle()
+  text = table.concat(vim.api.nvim_buf_get_lines(panel.state.input.buf, 0, -1, false), "\n")
+  assert(text:find("rascunho", 1, true), "the in-panel key should keep the draft: " .. vim.inspect(text))
+  plugin.close()
 end)
 
 test("a ranged command sends the selection", function()

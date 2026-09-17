@@ -266,6 +266,8 @@ local function panel_config()
     border = (cfg.get().ui.panel or {}).border or "rounded",
     title = " " .. M.title() .. " ",
     title_pos = "left",
+    footer = " i prompt · <C-c> interrupt · gd diff · r resend · q close ",
+    footer_pos = "center",
     focusable = true,
     zindex = 50,
   }
@@ -280,9 +282,13 @@ function M.set_keymaps(buf)
   local opts = { buffer = buf, nowait = true, silent = true }
   vim.keymap.set("n", "q", function() M.close() end, vim.tbl_extend("force", opts, { desc = "close panel" }))
   vim.keymap.set("n", "<Esc>", function() M.close() end, vim.tbl_extend("force", opts, { desc = "close panel" }))
-  vim.keymap.set("n", "i", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "open prompt" }))
-  vim.keymap.set("n", "a", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "open prompt" }))
-  vim.keymap.set("n", "<CR>", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "open prompt" }))
+  local function open_prompt()
+    -- from inside the panel the draft is kept on purpose
+    M.open_input(nil, nil, false)
+  end
+  vim.keymap.set("n", "i", open_prompt, vim.tbl_extend("force", opts, { desc = "open prompt" }))
+  vim.keymap.set("n", "a", open_prompt, vim.tbl_extend("force", opts, { desc = "open prompt" }))
+  vim.keymap.set("n", "<CR>", open_prompt, vim.tbl_extend("force", opts, { desc = "open prompt" }))
   vim.keymap.set("n", "<C-c>", function() M.interrupt() end, vim.tbl_extend("force", opts, { desc = "interrupt" }))
   vim.keymap.set("n", "gd", function() M.show_diff() end, vim.tbl_extend("force", opts, { desc = "turn diff" }))
   vim.keymap.set("n", "r", function() M.retry() end, vim.tbl_extend("force", opts, { desc = "resend last prompt" }))
@@ -347,13 +353,13 @@ local function ensure_win()
 end
 
 --- Opens the panel. With `opts.input ~= false`, also opens the prompt.
----@param opts? { prefill?: string, selection?: table, input?: boolean }
+---@param opts? { prefill?: string, selection?: table, input?: boolean, fresh?: boolean }
 function M.open(opts)
   opts = opts or {}
   ensure_win()
   M.update_title()
   if opts.input ~= false then
-    M.open_input(opts.prefill, opts.selection)
+    M.open_input(opts.prefill, opts.selection, opts.fresh ~= false)
   end
   return state.win
 end
@@ -509,7 +515,9 @@ end
 
 ---@param prefill? string
 ---@param selection? { bufnr: integer, first: integer, last: integer }
-function M.open_input(prefill, selection)
+---@param fresh? boolean start from an empty prompt (commands do; the in-panel
+--- key keeps the draft you were typing)
+function M.open_input(prefill, selection, fresh)
   local target = M.code_target()
   state.input.target = target
   -- Only an explicit selection counts (visual keymap or a ranged command):
@@ -523,8 +531,12 @@ function M.open_input(prefill, selection)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, util.lines(prefill))
   else
     local current = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
-    if state.input.selection and util.is_blank(current) then
+    if state.input.selection and (fresh or util.is_blank(current)) then
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "@this " })
+    elseif fresh then
+      -- A command always starts from an empty prompt: the draft of the previous
+      -- one (e.g. the edit template) must not come back.
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
     end
   end
 
@@ -581,7 +593,7 @@ end
 function M.after_submit()
   local mode = (cfg.get().ui or {}).focus_after_submit or "code"
   if mode == "input" then
-    return M.open_input()
+    return M.open_input(nil, nil, true)
   end
   if mode == "panel" then
     return M.focus()
@@ -844,11 +856,15 @@ local function tool_output(data)
   return util.pick_string(data, { "output", "text", "result", "error", "message" })
 end
 
+--- Only events of the session the panel is showing are rendered.
+---
+--- This used to accept everything while there was no session yet, which meant a
+--- TUI session running in another terminal streamed its text into this panel.
 local function belongs_here(data)
   local current = session.id()
-  if not current then return true end
+  if not current then return false end
   local sid = util.pick_string(data, { "sessionID", "sessionId" })
-  if not sid then return true end
+  if not sid then return false end
   if sid == current then return true end
   local parent = util.pick_string(data, { "parentID", "parentSessionID", "parentId" })
   return parent ~= nil and parent == current
@@ -893,13 +909,16 @@ function M.on_event(ev)
   if not HANDLED[kind] then return end
   if kind == "opencode.session.changed" then
     return M.on_session(data)
-  end  if not belongs_here(data) then return end
+  end
+  -- `server.connected` carries no session: it only refreshes the title.
+  if kind == "server.connected" then
+    return M.update_title()
+  end
+  if not belongs_here(data) then return end
 
   local renderer = M.renderer()
 
-  if kind == "server.connected" then
-    M.update_title()
-  elseif kind == "session.text.started" then
+  if kind == "session.text.started" then
     flush_all_tools(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)
