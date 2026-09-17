@@ -103,7 +103,8 @@ Without calling `setup()` the plugin configures itself with the defaults on
       input = { height = 4, border = "rounded" },
       diff = { width = 0.85, height = 0.6, border = "rounded" },
       focus_on_open = true,          -- opening the panel focuses it
-      focus_after_submit = "input",  -- "input" (stay in the prompt) | "code" | "panel"
+      focus_after_submit = "input",  -- "input": stay in the prompt (never closed, only
+                                    -- cleared) | "code" | "panel"
       escape_closes = "panel",       -- <Esc>: "panel" | "all" | "input"
       escape_closes = "all",       -- <Esc> in the prompt closes the panel too
     },

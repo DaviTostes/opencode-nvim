@@ -723,6 +723,30 @@ test("streaming never takes the cursor", function()
   plugin.close()
 end)
 
+test("sending keeps the prompt window and the focus", function()
+  local session = require("opencode-nvim.session")
+  local saved_prompt = session.prompt
+  session.prompt = function(_, _, cb) if cb then cb(nil) end end -- no network
+
+  plugin.open()
+  assert(panel.state.input.win ~= nil, "the prompt did not open")
+  local before = panel.state.input.win
+  vim.api.nvim_buf_set_lines(panel.state.input.buf, 0, -1, false, { "pergunta de teste" })
+
+  panel.submit()
+  settle()
+
+  assert(panel.state.input.win == before,
+    "the prompt window was recreated (that churn is what moved the focus/insert state)")
+  assert(vim.api.nvim_win_is_valid(before), "the prompt window was closed")
+  assert(vim.api.nvim_get_current_win() == before, "the prompt did not keep the focus")
+  local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.input.buf, 0, -1, false), "\n")
+  assert(text == "", "the prompt was not cleared: " .. vim.inspect(text))
+
+  session.prompt = saved_prompt
+  plugin.close()
+end)
+
 test("the prompt has a history", function()
   plugin.open()
   local input = panel.state.input

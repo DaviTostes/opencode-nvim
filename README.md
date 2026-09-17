@@ -105,7 +105,8 @@ require("opencode-nvim").setup({
   behaviour.
 - **You control the focus.** Opening the panel takes the cursor (you asked for
   it) and after sending you stay in the prompt, ready for the next message
-  (`ui.focus_after_submit = "input"`). `<Esc>` closes the prompt and hands the
+  (`ui.focus_after_submit = "input"`, the prompt is never closed on submit, only
+  cleared). `<Esc>` closes the prompt and hands the
   focus to the panel, where `q` closes the UI. `:OpencodeFocus` switches between
   the panel and your code at any time — floats are ordinary windows, so
   `nvim_set_current_win` or `:wincmd w` work too, but this is the round trip.

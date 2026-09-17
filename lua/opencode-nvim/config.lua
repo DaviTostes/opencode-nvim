@@ -64,8 +64,9 @@ M.defaults = {
     -- Opening the panel on purpose (a command or the toggle) focuses it, so its
     -- keys work right away. Automatic opens never move your cursor.
     focus_on_open = true,
-    -- After sending: "input" keeps you in the prompt (type the next message),
-    -- "code" puts you back in your code, "panel" focuses the panel.
+    -- After sending: "input" keeps you in the prompt, which is never closed
+    -- (type the next message right away); "code" puts you back in your code,
+    -- "panel" focuses the panel.
     focus_after_submit = "input", -- "input" | "code" | "panel"
     -- <Esc> in the prompt: "panel" closes the prompt and focuses the panel,
     -- "all" closes the whole UI, "input" just closes the prompt.

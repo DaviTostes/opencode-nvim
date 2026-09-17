@@ -702,7 +702,19 @@ function M.submit()
   if state.input.buf and vim.api.nvim_buf_is_valid(state.input.buf) then
     vim.api.nvim_buf_set_lines(state.input.buf, 0, -1, false, { "" })
   end
-  M.close_input()
+
+  -- `<CR>` is handled while insert mode is being processed, so closing the
+  -- window here and reopening it afterwards made the cursor (and the insert
+  -- state) land somewhere else. When the focus is meant to stay in the prompt,
+  -- the window is left exactly where it is: only the text is cleared.
+  local mode = (cfg.get().ui or {}).focus_after_submit or "input"
+  if mode == "input" and state.input.win and vim.api.nvim_win_is_valid(state.input.win) then
+    M.update_input_win()
+    pcall(vim.api.nvim_win_set_cursor, state.input.win, { 1, 0 })
+  else
+    M.close_input()
+  end
+
   M.send(text, { target = target, selection = selection })
   M.after_submit()
 end
@@ -710,8 +722,16 @@ end
 --- Where the cursor goes after sending: back to the code (default), to the
 --- panel, or to a fresh prompt.
 function M.after_submit()
-  local mode = (cfg.get().ui or {}).focus_after_submit or "code"
+  local mode = (cfg.get().ui or {}).focus_after_submit or "input"
   if mode == "input" then
+    if state.input.win and vim.api.nvim_win_is_valid(state.input.win) then
+      -- The prompt never lost the focus: just make sure it still has it.
+      pcall(vim.api.nvim_set_current_win, state.input.win)
+      if not vim.fn.mode():find("[iR]") then
+        vim.cmd("startinsert!")
+      end
+      return
+    end
     return M.open_input(nil, nil, true)
   end
   if mode == "panel" then
