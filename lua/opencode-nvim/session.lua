@@ -341,6 +341,24 @@ function M.ensure(opts, cb)
     agent = approval.agent
   end
 
+  -- A session creation that never answers used to leave the panel "running"
+  -- forever. Every path below goes through `finish`, and a watchdog reports a
+  -- clear error instead of hanging.
+  local finished = false
+  local timer = (vim.uv or vim.loop).new_timer()
+  local function finish(err, info)
+    if finished then return end
+    finished = true
+    timer:stop()
+    timer:close()
+    cb(err, info)
+  end
+  timer:start(25000, 0, function()
+    vim.schedule(function()
+      finish("timed out creating the session — check the service with :OpencodeDoctor")
+    end)
+  end)
+
   api.ensure_location(directory, function()
     M.models_for(directory, function(_, catalog)
       local model, dropped = M.resolve_model(opts.model, catalog)
@@ -348,8 +366,8 @@ function M.ensure(opts, cb)
         log.warn(dropped .. " — falling back to the server default model")
       end
       create_session(directory, agent, model, opts, false, function(err, info)
-        if err then return cb(err) end
-        finalize_agent(info, cb)
+        if err then return finish(err) end
+        finalize_agent(info, finish)
       end)
     end)
   end)
@@ -383,6 +401,9 @@ function M.refresh(cb)
     if not err and info then
       info.approval = M.current.approval
       M.current = info
+      -- the panel picks up new tokens/cost/title without replaying history
+      -- (on_session ignores a change for the same session)
+      event.emit({ type = "opencode.session.changed", data = info })
     end
     if cb then cb(err, info) end
   end)
@@ -496,10 +517,6 @@ function M.list(cb)
     if err then return cb(err) end
     cb(nil, sessions or {})
   end)
-end
-
-function M.list_all(cb)
-  api.list_sessions({ limit = 50, parentID = "null" }, cb)
 end
 
 function M.tokens()

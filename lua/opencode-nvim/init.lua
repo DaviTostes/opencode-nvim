@@ -309,16 +309,28 @@ function M.select_session()
   end)
 end
 
+--- Label for a model entry, marking the one the session is using.
+---@param model { providerID: string, id: string, variant?: string }
+---@param current? { providerID: string, id: string }
+---@return string
+function M.model_label(model, current)
+  local label = string.format("%s/%s", model.providerID, model.id)
+  if model.variant then label = label .. " · " .. model.variant end
+  if current and current.id == model.id and current.providerID == model.providerID then
+    label = "● " .. label
+  end
+  return label
+end
+
 function M.select_model()
   local info = session.info()
   if not info then return log.notify("no active session") end
   local directory = info.location and info.location.directory or nil
   session.models_for(directory, function(err, models)
-    if err then return fail("modelos", err) end
+    if err then return fail("models", err) end
     local items, map = {}, {}
     for _, model in ipairs(models or {}) do
-      local label = string.format("%s/%s", model.providerID, model.id)
-      if model.variant then label = label .. " · " .. model.variant end
+      local label = M.model_label(model, info.model)
       if not map[label] then
         items[#items + 1] = label
         map[label] = model
@@ -326,39 +338,54 @@ function M.select_model()
     end
     table.sort(items)
     if #items == 0 then return log.notify("no model available") end
-    picker.pick(items, { name = "modelos" }, function(choice)
+    picker.pick(items, { name = "models (● = current)" }, function(choice)
       if not choice then return end
       local model = map[choice]
       api.set_model(session.id(), model, function(set_err)
         if set_err then return fail("switch model", set_err) end
+        -- show it straight away, the event completes the picture later
+        if session.info() then session.info().model = model end
         log.notify("model: " .. choice)
       end)
     end)
   end)
 end
 
+--- Label for an agent entry, marking the one the session is using.
+---@param agent table
+---@param current? string
+---@return string?
+function M.agent_label(agent, current)
+  local id = agent.id or agent.name
+  local mode = agent.mode or agent.type
+  if not id or mode == "subagent" or mode == "hidden" then return nil end
+  local label = id .. (agent.description and ("  " .. agent.description) or "")
+  if #label > 80 then label = label:sub(1, 77) .. "..." end
+  if current and current == id then label = "● " .. label end
+  return label
+end
+
 function M.select_agent()
-  if not session.id() then return log.notify("no active session") end
+  local info = session.info()
+  if not info then return log.notify("no active session") end
   api.agents(function(err, agents)
-    if err then return fail("agentes", err) end
+    if err then return fail("agents", err) end
     local items, map = {}, {}
     for _, agent in ipairs(agents or {}) do
       if type(agent) == "table" then
-        local id = agent.id or agent.name
-        local mode = agent.mode or agent.type
-        if id and mode ~= "subagent" and mode ~= "hidden" then
-          local label = id .. (agent.description and ("  " .. agent.description) or "")
-          if #label > 80 then label = label:sub(1, 77) .. "..." end
+        local label = M.agent_label(agent, info.agent)
+        if label and not map[label] then
           items[#items + 1] = label
-          map[label] = id
+          map[label] = agent.id or agent.name
         end
       end
     end
     if #items == 0 then return log.notify("no agent available") end
-    picker.pick(items, { name = "agentes" }, function(choice)
+    picker.pick(items, { name = "agents (● = current)" }, function(choice)
       if not choice then return end
       api.set_agent(session.id(), map[choice], function(set_err)
         if set_err then return fail("switch agent", set_err) end
+        if session.info() then session.info().agent = map[choice] end
         log.notify("agent: " .. map[choice])
       end)
     end)

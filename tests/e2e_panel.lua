@@ -79,6 +79,13 @@ vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F9>", true, false, true),
 vim.wait(600, function() return false end, 50)
 
 report("the configured keymap opened the panel", panel.visible(), "panel is not visible")
+report("opening the panel did not open a prompt", panel.state.input.win == nil,
+  "toggling the panel opened the prompt")
+
+-- the prompt is opened on purpose (this is what the in-panel key does)
+panel.open_input()
+vim.wait(300, function() return false end, 50)
+report("the prompt opens on demand", panel.state.input.win ~= nil, "no prompt")
 report("the prompt opened focused", panel.state.input.win ~= nil
   and vim.api.nvim_get_current_win() == panel.state.input.win,
   string.format("input.win=%s current=%s", tostring(panel.state.input.win), tostring(vim.api.nvim_get_current_win())))

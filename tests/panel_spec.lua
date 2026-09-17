@@ -607,6 +607,76 @@ test("prompt and panel are aligned and do not overlap", function()
   plugin.close()
 end)
 
+test("showing the panel does not force a prompt", function()
+  plugin.close()
+  plugin.toggle()
+  settle()
+  assert(panel.visible(), "the panel did not open")
+  assert(panel.state.input.win == nil, "toggling opened the prompt")
+  plugin.toggle()
+  settle()
+  assert(not panel.visible(), "toggling again did not close it")
+end)
+
+test("the prompt has a history", function()
+  plugin.open()
+  local input = panel.state.input
+  input.history = { "first question", "second question" }
+  input.index = 0
+  input.draft = ""
+  vim.api.nvim_buf_set_lines(input.buf, 0, -1, false, { "draft" })
+
+  local function text()
+    return table.concat(vim.api.nvim_buf_get_lines(input.buf, 0, -1, false), "\n")
+  end
+
+  panel.input_history(-1) -- <C-p>
+  assert(text() == "second question", "C-p did not recall the last prompt: " .. vim.inspect(text()))
+  panel.input_history(-1)
+  assert(text() == "first question", "C-p did not go further back: " .. vim.inspect(text()))
+  panel.input_history(1)
+  assert(text() == "second question", "C-n did not go forward: " .. vim.inspect(text()))
+  panel.input_history(1)
+  assert(text() == "draft", "C-n did not restore the draft: " .. vim.inspect(text()))
+  plugin.close()
+end)
+
+test("pickers mark the current model and agent", function()
+  local current_model = { providerID = "p", id = "m" }
+  assert(plugin.model_label({ providerID = "p", id = "m" }, current_model) == "● p/m")
+  assert(plugin.model_label({ providerID = "p", id = "other" }, current_model) == "p/other")
+  assert(plugin.model_label({ providerID = "p", id = "m", variant = "v" }, current_model) == "● p/m · v")
+
+  assert(plugin.agent_label({ id = "build", mode = "primary" }, "build") == "● build")
+  assert(plugin.agent_label({ id = "explore", mode = "subagent" }, "build") == nil)
+  assert(plugin.agent_label({ id = "plan", mode = "primary", description = "plans" }, "build") == "plan  plans")
+end)
+
+test("session creation always calls back (error instead of hanging)", function()
+  local cfg = require("opencode-nvim.config")
+  local session = require("opencode-nvim.session")
+  local discovery = require("opencode-nvim.discovery")
+  local saved_url, saved_autostart = cfg.get().server.url, cfg.get().server.autostart
+  local saved_current = session.current
+
+  -- nothing listens here: the chain must end with an error, not with silence
+  cfg.get().server.url = "http://127.0.0.1:9"
+  cfg.get().server.autostart = false
+  discovery.reset()
+  session.current = nil
+
+  local done, err, info = false, nil, nil
+  session.new({ directory = vim.fn.tempname() }, function(e, i)
+    err, info, done = e, i, true
+  end)
+  assert(vim.wait(30000, function() return done end, 100), "ensure never called back")
+  assert(err ~= nil and info == nil, vim.inspect({ err = err, info = info }))
+
+  session.current = saved_current
+  cfg.get().server.url, cfg.get().server.autostart = saved_url, saved_autostart
+  discovery.reset()
+end)
+
 test("defaults do not steal focus", function()
   local defaults = require("opencode-nvim.config").defaults
   assert(defaults.approval.review == "notify",

@@ -147,7 +147,8 @@ reloads keeping your cursor, and `u` still undoes it.
 5. Commands					*opencode-nvim-commands*
 
 :Opencode					*:Opencode*
-	Open/close the panel and focus the prompt.
+	Show/hide the panel. It never moves the cursor and never opens the
+	prompt: use |:OpencodeAsk| or the `i` key inside the panel to type.
 :OpencodeClose					*:OpencodeClose*
 	Close the panel.
 :OpencodeAsk [text]				*:OpencodeAsk*
@@ -165,7 +166,7 @@ reloads keeping your cursor, and `u` still undoes it.
 :OpencodeSessions				*:OpencodeSessions*
 	Pick a session of the current directory.
 :OpencodeModels					*:OpencodeModels*
-	Pick the session model.
+	Pick the session model (the current one is marked ●).
 :OpencodeAgents					*:OpencodeAgents*
 	Pick the session agent.
 :OpencodeInterrupt				*:OpencodeInterrupt*
@@ -241,6 +242,7 @@ Inside the prompt:
   <CR>		send
   <C-j>		newline
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
+  <C-Up>, <C-Down>	history of prompts (normal mode: <C-p>, <C-n>)
   <Esc>		close the prompt and the panel (see `ui.escape_closes`)
   <C-c>		cancel the current turn
 

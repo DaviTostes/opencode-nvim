@@ -34,6 +34,7 @@ function M.new(buf)
     kinds = {},
     committed = 0,
     drawn = 0,
+    marked = 0,
     closed = true,
     tools = {},
   }, R)
@@ -63,13 +64,22 @@ function R:draw()
     tail[#tail + 1] = self.lines[index]
   end
   vim.api.nvim_buf_set_lines(self.buf, start, -1, false, tail)
-  vim.api.nvim_buf_clear_namespace(self.buf, ns, start, -1)
-  for index = start + 1, #self.lines do
+
+  -- Highlights: only for lines that are new or were rewritten. Re-applying an
+  -- extmark per line on every draw was the hottest path here (a streaming
+  -- reasoning block rewrote its whole tail ~14 times per second).
+  local previous = self.marked or 0
+  if previous > start then
+    pcall(vim.api.nvim_buf_clear_namespace, self.buf, ns, start, previous)
+    previous = start
+  end
+  for index = previous + 1, #self.lines do
     local group = HL[self.kinds[index] or "text"]
     if group then
       pcall(vim.api.nvim_buf_set_extmark, self.buf, ns, index - 1, 0, { line_hl_group = group })
     end
   end
+  self.marked = #self.lines
   self.drawn = #self.lines
   if self.on_after_draw then pcall(self.on_after_draw) end
 end
@@ -103,6 +113,8 @@ function R:rewind(line)
   if line - 1 < self.committed then
     self.committed = math.max(0, line - 1)
   end
+  -- the marks of the rewritten region are rebuilt by the next draw
+  self.marked = math.min(self.marked or 0, math.max(0, line - 1))
   self.closed = true
 end
 
@@ -246,6 +258,7 @@ function R:clear()
   self.tools = {}
   self.committed = 0
   self.drawn = 0
+  self.marked = 0
   self.closed = true
   self:draw()
 end

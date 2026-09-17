@@ -250,8 +250,11 @@ function M.on_event(ev)
   if ev.type == "permission.asked" then
     local request = ev.data or {}
     if not request.id then return end
-    if request.sessionID and session.id() and request.sessionID ~= session.id() then
-      log.debug("ignoring permission from another session", request.sessionID)
+    -- Only for the session the plugin is driving: without this a TUI session
+    -- asking for approval popped a dialog here too.
+    local current = session.id()
+    if not current or request.sessionID ~= current then
+      log.debug("ignoring permission from another session", tostring(request.sessionID))
       return
     end
     if active and active.id == request.id then return end
@@ -263,6 +266,17 @@ function M.on_event(ev)
       active = nil
       M.next()
     end
+  elseif ev.type == "session.execution.interrupted" or ev.type == "session.execution.failed"
+    or ev.type == "session.execution.succeeded" then
+    -- The turn is over: any dialog still waiting for an answer is stale.
+    if active or #queue > 0 then
+      log.debug("dropping stale permission requests after the turn ended")
+    end
+    active = nil
+    queue = {}
+    deferred = {}
+    paused = false
+    require("opencode-nvim.ui.diff").close_if("permission")
   end
 end
 

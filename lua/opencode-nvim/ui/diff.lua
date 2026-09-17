@@ -22,6 +22,13 @@ end
 
 M.close = close
 
+--- Close the popup only when it was opened by `kind` (so finishing a turn does
+--- not close a diff or a doctor view you opened yourself).
+---@param kind string
+function M.close_if(kind)
+  if active and active.kind == kind then close() end
+end
+
 --- Buffer lines cannot contain newlines: split them (callers may pass blocks).
 local function normalize_lines(lines)
   local out = {}
@@ -77,7 +84,7 @@ local function open_float(opts)
   vim.wo[win].cursorline = true
   vim.wo[win].winhighlight = "Normal:OpencodeNormal,FloatBorder:OpencodeBorder,FloatTitle:OpencodeTitle"
 
-  active = { buf = buf, win = win, on_close = opts.on_close, previous_win = previous_win }
+  active = { buf = buf, win = win, on_close = opts.on_close, previous_win = previous_win, kind = opts.kind }
 
   local keymaps = vim.deepcopy(opts.keymaps or {})
   -- Only add the defaults when the caller did not define them: a later
@@ -159,6 +166,7 @@ function M.patches(opts)
     filetype = "diff",
     keymaps = keymaps,
     footer = footer(hint),
+    kind = "permission",
   })
 end
 
@@ -189,6 +197,7 @@ function M.confirm(opts)
     width = 0.7,
     keymaps = keymaps,
     footer = footer("<CR>/y allow once   A allow always   x reject   <Esc> later"),
+    kind = "permission",
   })
 end
 
@@ -200,6 +209,7 @@ function M.review(opts)
     title = opts.title or "turn changes",
     lines = lines,
     filetype = "diff",
+    kind = "review",
     keymaps = {
       { "<CR>", close, "keep" },
       { "u", function()
@@ -221,6 +231,7 @@ function M.text(opts)
     height = opts.height,
     keymaps = {},
     footer = footer(),
+    kind = opts.kind,
   })
 end
 

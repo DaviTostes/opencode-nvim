@@ -27,14 +27,17 @@ Local development: `vim.opt.rtp:prepend("/home/toast/opencode-nvim")`.
 ## Quick start
 
 ```
-:Opencode          open the panel with an empty prompt
-type, then <CR>    send
-<Esc>              close the prompt and the panel
+:Opencode          show/hide the panel (no prompt, no focus change)
+:OpencodeAsk       open the prompt and type
+<CR>               send
+<Esc>              leave
 ```
 
-Every command opens a **fresh, empty prompt** (`:OpencodeAsk`, `:OpencodeEdit`
-and `:OpencodeActions` fill in what they need). The `i` key inside the panel is
-the one that keeps the draft you were typing.
+`:Opencode` never moves your cursor: it only shows the panel. The prompt is
+opened on purpose by `:OpencodeAsk`, `:OpencodeEdit`, `:OpencodeActions` or the
+`i` key inside the panel, and it always starts empty (`i` keeps the draft you
+were typing). After sending you stay in your code, and `<C-Up>`/`<C-Down>`
+walks the history of prompts.
 
 That is the whole loop. No keymaps are installed by default; if you want them,
 list exactly the ones you want (mapping happens when `setup()` runs, so
@@ -58,7 +61,7 @@ require("opencode-nvim").setup({
 
 | Command | What it does |
 | --- | --- |
-| `:Opencode` | open/close the panel |
+| `:Opencode` | show/hide the panel (does not touch your cursor) |
 | `:OpencodeClose` | close the panel |
 | `:OpencodeAsk [text]` | ask; with a range it sends the selection |
 | `:OpencodeEdit` | ask for a change in the selection (or file) |
@@ -113,7 +116,7 @@ require("opencode-nvim").setup({
 - **Pick a good model.** The plugin uses the model you last used in the TUI. The
   server default can be a free-tier model that refuses to run; pin one with
   `model = { providerID = "...", id = "..." }` or pick it live with
-  `:OpencodeModels`.
+  `:OpencodeModels` (the choice in use is marked `●`, same for `:OpencodeAgents`).
 - **Reasoning is folded.** Each reasoning run shows a `▸ thinking` header with
   the block folded right below it; `zo` opens one, `zR` opens all. Answers are
   never buried in thinking.

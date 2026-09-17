@@ -131,30 +131,32 @@ end
 -- Panel window
 --------------------------------------------------------------------------------
 
+--- Panel title. Status first (it is what changes and what you glance at),
+--- then agent/model, then the cheap-to-skip numbers.
 function M.title()
   local parts = {}
-  local info = session.info()
-  if info then
-    parts[#parts + 1] = "opencode"
-    if info.agent then parts[#parts + 1] = info.agent end
-    local model = state.model or (info.model and (info.model.id or info.model.modelID))
-    if model then parts[#parts + 1] = model end
-    local total, cost = session.tokens()
-    if total > 0 then parts[#parts + 1] = string.format("%.1fk", total / 1000) end
-    if cost and cost > 0 then parts[#parts + 1] = string.format("$%.4f", cost) end
-  else
-    parts[#parts + 1] = "opencode · no session"
-  end
   if state.status == "running" then
     local elapsed = state.running_since
       and math.floor(((vim.uv or vim.loop).now() - state.running_since) / 1000)
       or 0
     parts[#parts + 1] = elapsed > 0 and string.format("● %ds", elapsed) or "●"
+  elseif state.status == "error" then
+    parts[#parts + 1] = "!"
   end
-  if state.status == "error" then parts[#parts + 1] = "!" end
-  if not event.started() or event.connected() then
-    -- nothing to report (the stream only starts on first use)
+
+  local info = session.info()
+  if info then
+    local model = state.model or (info.model and (info.model.id or info.model.modelID))
+    if info.agent then parts[#parts + 1] = info.agent end
+    if model then parts[#parts + 1] = model end
+    local total, cost = session.tokens()
+    if total > 0 then parts[#parts + 1] = string.format("%.1fk", total / 1000) end
+    if cost and cost > 0 then parts[#parts + 1] = string.format("$%.4f", cost) end
   else
+    parts[#parts + 1] = "no session"
+  end
+
+  if event.started() and not event.connected() then
     parts[#parts + 1] = "offline"
   end
   return table.concat(parts, " · ")
@@ -408,8 +410,11 @@ function M.close()
   state.win = nil
 end
 
+--- Show or hide the panel. Showing it never moves the cursor and never opens
+--- the prompt: type with `:OpencodeAsk` or the in-panel key.
 function M.toggle()
-  if M.visible() then M.close() else M.open() end
+  if M.visible() then return M.close() end
+  M.open({ input = false })
 end
 
 function M.focus()
@@ -436,13 +441,12 @@ function M.input_buf()
   vim.keymap.set({ "i", "n" }, "<C-j>", function() M.insert_newline() end, opts)
   vim.keymap.set({ "i", "n" }, "<Esc>", function() M.escape() end, opts)
   vim.keymap.set({ "i", "n" }, "<C-c>", function() M.interrupt() end, opts)
-  vim.keymap.set({ "i", "n" }, "<C-l>", function()
-    if cfg.get().permissions == false then
-      log.notify("no approval configured (permissions = false)")
-    else
-      log.notify("session permissions: edit/shell = ask")
-    end
-  end, opts)
+  -- <C-p>/<C-n> are completion keys in insert mode, so the prompt history uses
+  -- <C-Up>/<C-Down> there and <C-p>/<C-n> only in normal mode.
+  vim.keymap.set({ "i", "n" }, "<C-Up>", function() M.input_history(-1) end, opts)
+  vim.keymap.set({ "i", "n" }, "<C-Down>", function() M.input_history(1) end, opts)
+  vim.keymap.set("n", "<C-p>", function() M.input_history(-1) end, opts)
+  vim.keymap.set("n", "<C-n>", function() M.input_history(1) end, opts)
   vim.bo[buf].omnifunc = "v:lua.opencode_nvim_omnifunc"
 
   vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
@@ -451,6 +455,32 @@ function M.input_buf()
   })
 
   return buf
+end
+
+--- Browse previously sent prompts: <C-p> goes back, <C-n> forward, and going
+--- past the newest restores the draft.
+---@param direction -1 older, 1 newer
+function M.input_history(direction)
+  local history = state.input.history
+  local input = state.input
+  if not (input.buf and vim.api.nvim_buf_is_valid(input.buf)) then return end
+  if #history == 0 then return end
+
+  if input.index == 0 and direction < 0 then
+    input.draft = table.concat(vim.api.nvim_buf_get_lines(input.buf, 0, -1, false), "\n")
+  end
+  local index = math.max(0, math.min(#history, (input.index or 0) - direction))
+  input.index = index
+
+  local text = index == 0 and (input.draft or "") or history[#history - index + 1]
+  vim.api.nvim_buf_set_lines(input.buf, 0, -1, false, util.lines(text))
+  local last = vim.api.nvim_buf_line_count(input.buf)
+  local last_line = vim.api.nvim_buf_get_lines(input.buf, last - 1, last, false)[1] or ""
+  if input.win and vim.api.nvim_win_is_valid(input.win) then
+    pcall(vim.api.nvim_win_set_cursor, input.win, { last, #last_line })
+  end
+  M.update_input_win()
+  vim.cmd("startinsert!")
 end
 
 --- Completion for `@` placeholders, files and buffers.
@@ -549,6 +579,10 @@ function M.open_input(prefill, selection, fresh)
   -- leak into prompts that did not ask for one.
   state.input.selection = selection
   state.input.saved_win = vim.api.nvim_get_current_win()
+  if fresh then
+    state.input.index = 0
+    state.input.draft = ""
+  end
 
   local buf = M.input_buf()
   if prefill and prefill ~= "" then
@@ -604,6 +638,16 @@ function M.submit()
 
   local target = state.input.target
   local selection = state.input.selection
+
+  -- keep a short history (used by <C-p>/<C-n>)
+  local history = state.input.history
+  if history[#history] ~= text then
+    history[#history + 1] = text
+    if #history > 50 then table.remove(history, 1) end
+  end
+  state.input.index = 0
+  state.input.draft = ""
+
   if state.input.buf and vim.api.nvim_buf_is_valid(state.input.buf) then
     vim.api.nvim_buf_set_lines(state.input.buf, 0, -1, false, { "" })
   end
@@ -736,6 +780,8 @@ end
 function M.clear()
   -- The per-turn bookkeeping has to go too: a stale `thinking` flag would
   -- swallow the next turn's placeholder and a stale tool would never render.
+  state.input.index = 0
+  state.input.draft = ""
   state.thinking = false
   state.reasoning_open = false
   state.pending_tools = {}

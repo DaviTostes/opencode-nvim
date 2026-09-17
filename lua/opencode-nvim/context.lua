@@ -125,9 +125,15 @@ end
 
 local function fmt_diff(opts)
   local dir = directory(opts)
-  local lines = vim.fn.systemlist({ "git", "-C", dir, "diff", "--no-color" })
-  if vim.v.shell_error ~= 0 or #lines == 0 then return "(no changes)" end
-  lines = util.truncate_lines(lines, cfg.get().context.diff_max_lines)
+  -- `vim.system` with a timeout: a huge diff in a big repository used to block
+  -- the editor while it was generated.
+  local ok, result = pcall(function()
+    return vim.system({ "git", "-C", dir, "diff", "--no-color", "--no-ext-diff" }, { text = true }):wait(3000)
+  end)
+  if not ok or type(result) ~= "table" or result.code ~= 0 then return "(no changes)" end
+  local output = result.stdout or ""
+  if output == "" then return "(no changes)" end
+  local lines = util.truncate_lines(util.lines(output), cfg.get().context.diff_max_lines)
   return "```diff\n" .. table.concat(lines, "\n") .. "\n```"
 end
 
