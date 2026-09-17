@@ -66,28 +66,28 @@ local function command(name, fn, opts)
 end
 
 function M.create_commands()
-  command("Opencode", function() M.toggle() end, { desc = "alterna o painel do opencode" })
+  command("Opencode", function() M.toggle() end, { desc = "toggle the opencode panel" })
   command("OpencodeAsk", function(args)
     local prefill = args.args ~= "" and args.args or nil
     M.ask(prefill)
-  end, { nargs = "*", desc = "pergunta ao opencode" })
-  command("OpencodeNew", function() M.new_session() end, { desc = "nova sessão do opencode" })
+  end, { nargs = "*", desc = "ask opencode" })
+  command("OpencodeNew", function() M.new_session() end, { desc = "new opencode session" })
   command("OpencodeAttach", function(args)
     session.attach(args.args, function(err)
       if err then fail("attach", err) end
     end)
-  end, { nargs = 1, desc = "anexa uma sessão existente" })
-  command("OpencodeSessions", function() M.select_session() end, { desc = "escolhe uma sessão" })
-  command("OpencodeModels", function() M.select_model() end, { desc = "escolhe o modelo" })
-  command("OpencodeAgents", function() M.select_agent() end, { desc = "escolhe o agente" })
-  command("OpencodeInterrupt", function() M.interrupt() end, { desc = "interrompe a execução" })
-  command("OpencodeUndo", function() M.undo() end, { desc = "desfaz o último turno" })
-  command("OpencodeApproval", function() M.approval_status() end, { desc = "estado da aprovação no editor" })
-  command("OpencodeApprovalAgent", function() M.setup_approval_agent() end, { desc = "cria o agente de aprovação no config do OpenCode" })
-  command("OpencodeDiff", function() M.diff() end, { desc = "diff do último turno" })
-  command("OpencodePermissions", function() permission.select() end, { desc = "permissões pendentes" })
-  command("OpencodeEvents", function() M.events() end, { desc = "eventos recebidos do servidor" })
-  command("OpencodeHealth", function() M.health() end, { desc = "checa a conexão com o opencode" })
+  end, { nargs = 1, desc = "attach an existing session" })
+  command("OpencodeSessions", function() M.select_session() end, { desc = "pick a session" })
+  command("OpencodeModels", function() M.select_model() end, { desc = "pick the model" })
+  command("OpencodeAgents", function() M.select_agent() end, { desc = "pick the agent" })
+  command("OpencodeInterrupt", function() M.interrupt() end, { desc = "interrupt the running turn" })
+  command("OpencodeUndo", function() M.undo() end, { desc = "undo the last turn" })
+  command("OpencodeApproval", function() M.approval_status() end, { desc = "in-editor approval status" })
+  command("OpencodeApprovalAgent", function() M.setup_approval_agent() end, { desc = "create the approval agent in the OpenCode config" })
+  command("OpencodeDiff", function() M.diff() end, { desc = "diff of the last turn" })
+  command("OpencodePermissions", function() permission.select() end, { desc = "pending permissions" })
+  command("OpencodeEvents", function() M.events() end, { desc = "events received from the server" })
+  command("OpencodeHealth", function() M.health() end, { desc = "check the connection to opencode" })
   command("OpencodeLog", function(args)
     local level = util.trim(args.args)
     if level == "" then
@@ -97,7 +97,7 @@ function M.create_commands()
     cfg.get().log.level = level
     log.level = level
     log.notify("log level = " .. level)
-  end, { nargs = "?", desc = "nível de log do opencode-nvim" })
+  end, { nargs = "?", desc = "opencode-nvim log level" })
 end
 
 function M.create_keymaps()
@@ -109,7 +109,7 @@ function M.create_keymaps()
     vim.keymap.set(mode, lhs, rhs, { desc = "opencode: " .. desc, silent = true })
   end
 
-  map({ "n", "x" }, keys.toggle, function() M.toggle() end, "alterna painel")
+  map({ "n", "x" }, keys.toggle, function() M.toggle() end, "toggle panel")
   map({ "n", "x" }, keys.ask, function()
     if vim.fn.mode():find("[vV\22]") then
       local first, last = vim.fn.line("v"), vim.fn.line(".")
@@ -119,15 +119,15 @@ function M.create_keymaps()
     else
       M.ask()
     end
-  end, "pergunta")
-  map({ "n", "x" }, keys.ask_buffer, function() M.ask("@buffer ") end, "pergunta com o buffer")
-  map("n", keys.sessions, function() M.select_session() end, "sessões")
-  map("n", keys.models, function() M.select_model() end, "modelo")
-  map("n", keys.agents, function() M.select_agent() end, "agente")
-  map("n", keys.diff, function() M.diff() end, "diff do turno")
-  map("n", keys.interrupt, function() M.interrupt() end, "interromper")
-  map("n", keys.undo, function() M.undo() end, "desfazer turno")
-  map({ "n", "x" }, keys.events, function() M.events() end, "eventos")
+  end, "ask")
+  map({ "n", "x" }, keys.ask_buffer, function() M.ask("@buffer ") end, "ask with the buffer")
+  map("n", keys.sessions, function() M.select_session() end, "sessions")
+  map("n", keys.models, function() M.select_model() end, "model")
+  map("n", keys.agents, function() M.select_agent() end, "agent")
+  map("n", keys.diff, function() M.diff() end, "turn diff")
+  map("n", keys.interrupt, function() M.interrupt() end, "interrupt")
+  map("n", keys.undo, function() M.undo() end, "undo turn")
+  map({ "n", "x" }, keys.events, function() M.events() end, "events")
 end
 
 --------------------------------------------------------------------------------
@@ -150,7 +150,7 @@ function M.setup(opts)
   M.create_keymaps()
   M.wire()
   M._setup_done = true
-  log.debug("setup concluído")
+  log.debug("setup done")
   return M
 end
 
@@ -203,24 +203,24 @@ end
 
 function M.new_session()
   session.new({}, function(err)
-    if err then return fail("nova sessão", err) end
+    if err then return fail("new session", err) end
   end)
 end
 
 function M.select_session()
   session.list(function(err, sessions)
-    if err then return fail("sessões", err) end
-    local items, map = { "+ nova sessão" }, {}
+    if err then return fail("sessions", err) end
+    local items, map = { "+ new session" }, {}
     for _, info in ipairs(sessions or {}) do
-      local title = (info.title or "(sem título)"):gsub("%s+", " ")
+      local title = (info.title or "(untitled)"):gsub("%s+", " ")
       if #title > 60 then title = title:sub(1, 57) .. "..." end
       local label = string.format("%s  %s  [%s]", info.id, title, info.agent or "?")
       items[#items + 1] = label
       map[label] = info
     end
-    picker.pick(items, { name = "sessões do opencode" }, function(choice)
+    picker.pick(items, { name = "opencode sessions" }, function(choice)
       if not choice then return end
-      if choice == "+ nova sessão" then return M.new_session() end
+      if choice == "+ new session" then return M.new_session() end
       local info = map[choice]
       if not info then return end
       session.attach(info.id, function(attach_err)
@@ -232,7 +232,7 @@ end
 
 function M.select_model()
   local info = session.info()
-  if not info then return log.notify("nenhuma sessão ativa") end
+  if not info then return log.notify("no active session") end
   local directory = info.location and info.location.directory or nil
   session.models_for(directory, function(err, models)
     if err then return fail("modelos", err) end
@@ -246,20 +246,20 @@ function M.select_model()
       end
     end
     table.sort(items)
-    if #items == 0 then return log.notify("nenhum modelo disponível") end
+    if #items == 0 then return log.notify("no model available") end
     picker.pick(items, { name = "modelos" }, function(choice)
       if not choice then return end
       local model = map[choice]
       api.set_model(session.id(), model, function(set_err)
-        if set_err then return fail("trocar modelo", set_err) end
-        log.notify("modelo: " .. choice)
+        if set_err then return fail("switch model", set_err) end
+        log.notify("model: " .. choice)
       end)
     end)
   end)
 end
 
 function M.select_agent()
-  if not session.id() then return log.notify("nenhuma sessão ativa") end
+  if not session.id() then return log.notify("no active session") end
   api.agents(function(err, agents)
     if err then return fail("agentes", err) end
     local items, map = {}, {}
@@ -275,22 +275,22 @@ function M.select_agent()
         end
       end
     end
-    if #items == 0 then return log.notify("nenhum agente disponível") end
+    if #items == 0 then return log.notify("no agent available") end
     picker.pick(items, { name = "agentes" }, function(choice)
       if not choice then return end
       api.set_agent(session.id(), map[choice], function(set_err)
-        if set_err then return fail("trocar agente", set_err) end
-        log.notify("agente: " .. map[choice])
+        if set_err then return fail("switch agent", set_err) end
+        log.notify("agent: " .. map[choice])
       end)
     end)
   end)
 end
 
 function M.undo()
-  if not session.id() then return log.notify("nenhuma sessão ativa") end
+  if not session.id() then return log.notify("no active session") end
   session.revert_last_turn(function(err)
     if err then return fail("undo", err) end
-    log.notify("último turno desfeito")
+    log.notify("last turn undone")
   end)
 end
 
@@ -311,7 +311,7 @@ end
 local function approval_agent_definition()
   local approval = cfg.get().approval or {}
   return {
-    description = "OpenCode dentro do Neovim: pede aprovação antes de editar arquivos e rodar shell",
+    description = "OpenCode inside Neovim: asks for approval before editing files and running shell",
     mode = "primary",
     permissions = approval.permissions or {
       { action = "edit", resource = "*", effect = "ask" },
@@ -364,7 +364,7 @@ function M.setup_approval_agent()
       width = 0.8,
       height = 0.5,
     })
-    log.notify("não consegui editar " .. path .. " (tem comentários?); copie o trecho da janela", vim.log.levels.WARN)
+    log.notify("could not edit " .. path .. " (comments in the file?); copy the snippet from the window", vim.log.levels.WARN)
     return
   end
 
@@ -376,7 +376,7 @@ function M.setup_approval_agent()
   if not ok then return fail("escrever " .. path, err) end
   session.reset_agents()
   log.notify(string.format(
-    "agente '%s' gravado em %s — rode `opencode2 service restart` e abra uma sessão nova", name, path))
+    "agent '%s' written to %s — run `opencode2 service restart` and open a new session", name, path))
 end
 
 --- Shows which agents pause for approval.
@@ -384,10 +384,10 @@ function M.approval_status()
   session.agents(function(err, agents)
     local approval = cfg.get().approval or {}
     local configured = approval.agent or "opencode-nvim"
-    local lines = { "Aprovação no editor (diff antes de gravar)", "" }
+    local lines = { "In-editor approval (diff before writing)", "" }
 
     if err then
-      lines[#lines + 1] = "não consegui listar os agentes: " .. err_text(err)
+      lines[#lines + 1] = "could not list agents: " .. err_text(err)
     end
 
     local found = false
@@ -404,18 +404,18 @@ function M.approval_status()
         if id == configured then found = true end
       end
     end
-    if #lines == 2 then lines[#lines + 1] = "  (nenhum agente pede aprovação)" end
+    if #lines == 2 then lines[#lines + 1] = "  (no agent asks for approval)" end
 
     lines[#lines + 1] = ""
-    lines[#lines + 1] = string.format("agente de aprovação configurado: %s (%s)", configured, found and "encontrado" or "não existe")
+    lines[#lines + 1] = string.format("approval agent configured: %s (%s)", configured, found and "found" or "missing")
     lines[#lines + 1] = ""
-    lines[#lines + 1] = "Sem um agente de aprovação o plugin revisa o turno depois:"
-    lines[#lines + 1] = "  :OpencodeDiff  mostra as mudanças"
-    lines[#lines + 1] = "  :OpencodeUndo  desfaz o turno"
+    lines[#lines + 1] = "Without an approval agent the plugin reviews the turn afterwards:"
+    lines[#lines + 1] = "  :OpencodeDiff  shows the changes"
+    lines[#lines + 1] = "  :OpencodeUndo  undoes the turn"
     lines[#lines + 1] = ""
-    lines[#lines + 1] = ":OpencodeApprovalAgent  cria o agente no config do OpenCode"
+    lines[#lines + 1] = ":OpencodeApprovalAgent  creates the agent in the OpenCode config"
 
-    require("opencode-nvim.ui.diff").text({ title = "opencode · aprovação", lines = lines })
+    require("opencode-nvim.ui.diff").text({ title = "opencode · approval", lines = lines })
   end)
 end
 
@@ -430,7 +430,7 @@ function M.events()
     if #payload > 500 then payload = payload:sub(1, 500) .. "..." end
     lines[#lines + 1] = string.format("%s  %s", item.type, payload)
   end
-  if #lines == 0 then lines = { "(nenhum evento recebido ainda)" } end
+  if #lines == 0 then lines = { "(no events received yet)" } end
   require("opencode-nvim.ui.diff").text({
     title = "opencode · eventos",
     lines = lines,
@@ -443,26 +443,26 @@ end
 function M.health()
   local info = discovery.describe()
   local lines = {
-    "arquivo de serviço: " .. info.service_file,
-    "serviço registrado: " .. tostring(info.service_exists) .. "  (pid vivo: " .. tostring(info.pid_alive) .. ")",
+    "service file: " .. info.service_file,
+    "service registered: " .. tostring(info.service_exists) .. "  (pid alive: " .. tostring(info.pid_alive) .. ")",
     "comando: " .. tostring(info.command),
     "stream de eventos: " .. event.status(),
-    "sessão atual: " .. tostring(session.id() or "(nenhuma)"),
-    "permissões pendentes: " .. tostring(#permission.pending()),
+    "current session: " .. tostring(session.id() or "(none)"),
+    "pending permissions: " .. tostring(#permission.pending()),
     "autoread: " .. tostring(vim.o.autoread),
     "",
   }
   api.health(function(err, health, server)
     if err then
-      lines[#lines + 1] = "conexão: FALHOU — " .. err_text(err)
+      lines[#lines + 1] = "connection: FAILED — " .. err_text(err)
     else
-      lines[#lines + 1] = "conexão: ok — " .. tostring(server and server.url or "?")
+      lines[#lines + 1] = "connection: ok — " .. tostring(server and server.url or "?")
       local ok, encoded = pcall(vim.inspect, health)
-      lines[#lines + 1] = "servidor: " .. (ok and encoded or "?")
+      lines[#lines + 1] = "server: " .. (ok and encoded or "?")
     end
     local current = session.info()
     if current then
-      lines[#lines + 1] = string.format("sessão: %s  agente=%s  modelo=%s",
+      lines[#lines + 1] = string.format("session: %s  agent=%s  model=%s",
         current.id, tostring(current.agent), tostring(current.model and (current.model.id or current.model.modelID)))
     end
     require("opencode-nvim.ui.diff").text({ title = "opencode · health", lines = lines })

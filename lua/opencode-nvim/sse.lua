@@ -51,7 +51,7 @@ function M.ensure(cb)
     if state.connected then return end
     tries = tries + 1
     if tries > 40 then
-      return flush_waiters("timeout esperando o stream de eventos")
+      return flush_waiters("timeout waiting for the event stream")
     end
     vim.defer_fn(wait, 250)
   end
@@ -70,7 +70,7 @@ local function parse_frame(frame, emit)
 
   local ok, event = pcall(vim.json.decode, table.concat(payload, "\n"))
   if not ok or type(event) ~= "table" then
-    log.debug("evento inválido:", table.concat(payload, "\n"))
+    log.debug("invalid event:", table.concat(payload, "\n"))
     return
   end
   emit(event)
@@ -103,7 +103,7 @@ function M.stop()
   end
   state.connected = false
   state.status = "off"
-  flush_waiters("stream encerrado")
+  flush_waiters("stream stopped")
 end
 
 ---@param opts? { on_event?: fun(event: table) }
@@ -126,7 +126,7 @@ function M.start(opts)
     if generation ~= state.generation then return end
     if err then
       state.status = "error"
-      log.debug("sse: resolve falhou:", err)
+      log.debug("sse: resolve failed:", err)
       return schedule_retry(state.backoff)
     end
 
@@ -169,9 +169,9 @@ function M.start(opts)
         state.status = end_err and "error" or "off"
         state.handle = nil
         if end_err then
-          log.debug("sse encerrou:", end_err, "status", status)
+          log.debug("sse ended:", end_err, "status", status)
         else
-          log.debug("sse encerrou: conexão fechada pelo servidor")
+          log.debug("sse ended: connection closed by the server")
         end
         local delay = state.backoff
         state.backoff = math.min(state.backoff * 2, MAX_BACKOFF)

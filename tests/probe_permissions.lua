@@ -16,7 +16,7 @@ local function step(name, fn, timeout)
     io.write("   TIMEOUT\n"); return nil
   end
   if err then
-    io.write("   ERRO: " .. (type(err) == "table" and (err.message or vim.inspect(err)) or tostring(err)) .. "\n")
+    io.write("   ERROR: " .. (type(err) == "table" and (err.message or vim.inspect(err)) or tostring(err)) .. "\n")
     return nil
   end
   return true
@@ -35,7 +35,7 @@ step("agentes", function(cb)
 end)
 
 local created = {}
-step("criar sessão com permissions edit/shell = ask", function(cb)
+step("create session with permissions edit/shell = ask", function(cb)
   api.create_session({
     location = { directory = vim.fn.tempname() },
     agent = "build",
@@ -48,8 +48,8 @@ step("criar sessão com permissions edit/shell = ask", function(cb)
   }, function(err, info)
     if err then return cb(err) end
     created[#created + 1] = info.id
-    io.write("   criada " .. info.id .. "\n")
-    io.write("   resposta.permissions = " .. vim.inspect(info.permissions) .. "\n")
+    io.write("   created " .. info.id .. "\n")
+    io.write("   response.permissions = " .. vim.inspect(info.permissions) .. "\n")
     api.get_session(info.id, function(err2, fresh)
       if err2 then return cb(err2) end
       io.write("   GET .permissions     = " .. vim.inspect(fresh.permissions) .. "\n")
@@ -59,7 +59,7 @@ step("criar sessão com permissions edit/shell = ask", function(cb)
   end)
 end)
 
-step("config global", function(cb)
+step("global config", function(cb)
   api.raw({ method = "GET", path = "/api/config" }, function(err, decoded)
     if err then return cb(err) end
     local config = type(decoded) == "table" and (decoded.data or decoded) or decoded
@@ -71,7 +71,7 @@ step("config global", function(cb)
 end)
 
 for _, id in ipairs(created) do
-  step("limpar " .. id, function(cb)
+  step("clean up " .. id, function(cb)
     api.delete_session(id, function() cb(nil) end)
   end)
 end

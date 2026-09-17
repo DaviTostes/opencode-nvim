@@ -12,21 +12,21 @@ local active = nil
 local paused = false
 
 local ACTION_LABEL = {
-  edit = "editar arquivo",
-  shell = "executar comando",
-  read = "ler arquivo",
-  glob = "listar arquivos",
-  grep = "buscar conteúdo",
-  webfetch = "buscar URL",
-  websearch = "buscar na web",
-  external_directory = "acessar diretório externo",
-  skill = "ativar skill",
-  subagent = "chamar subagente",
-  question = "fazer pergunta",
+  edit = "edit a file",
+  shell = "run a command",
+  read = "read a file",
+  glob = "list files",
+  grep = "search contents",
+  webfetch = "fetch a URL",
+  websearch = "search the web",
+  external_directory = "access an external directory",
+  skill = "activate a skill",
+  subagent = "call a subagent",
+  question = "ask a question",
 }
 
 local function label(request)
-  return ACTION_LABEL[request.action] or request.action or "ação"
+  return ACTION_LABEL[request.action] or request.action or "action"
 end
 
 local function relevant_patches(patches, resources)
@@ -52,7 +52,7 @@ local function reply(request, decision, message)
   active = nil
   api.reply_permission(session.id(), request.id, decision, message, function(err)
     if err then
-      log.error("falha ao responder a permissão: " .. require("opencode-nvim.util").err_text(err))
+      log.error("failed to reply to the permission: " .. require("opencode-nvim.util").err_text(err))
     end
   end)
   vim.schedule(function()
@@ -158,8 +158,8 @@ local function present(request, patches, source)
   local message = request.message
 
   if request.action == "edit" and patches and #patches > 0 then
-    local title = "aprovar edição"
-    if source == "working" then title = "aprovar edição (working tree atual)" end
+    local title = "approve edit"
+    if source == "working" then title = "approve edit (current working tree)" end
     ui.patches({
       title = title,
       patches = relevant_patches(patches, resources),
@@ -168,7 +168,7 @@ local function present(request, patches, source)
           deferred[#deferred + 1] = request
           active = nil
           paused = true
-          log.notify("permissão pendente — use :OpencodePermissions para decidir depois")
+          log.notify("permission pending — use :OpencodePermissions to decide later")
           return
         end
         reply(request, choice, text)
@@ -178,7 +178,7 @@ local function present(request, patches, source)
   end
 
   local body = {
-    string.format("O OpenCode pediu permissão para %s.", label(request)),
+    string.format("OpenCode is asking for permission to %s.", label(request)),
     "",
   }
   for _, resource in ipairs(resources) do
@@ -190,14 +190,14 @@ local function present(request, patches, source)
   end
 
   ui.confirm({
-    title = "permissão: " .. tostring(request.action),
+    title = "permission: " .. tostring(request.action),
     body = body,
     on_choice = function(choice, text)
       if not choice then
         deferred[#deferred + 1] = request
         active = nil
         paused = true
-        log.notify("permissão pendente — use :OpencodePermissions para decidir depois")
+        log.notify("permission pending — use :OpencodePermissions to decide later")
         return
       end
       reply(request, choice, text)
@@ -217,7 +217,7 @@ function M.next()
       if patches and #patches > 0 then return present(request, patches, "proposal") end
       session.diff({ context = 3 }, function(err, diff_patches, source)
         if err then
-          log.debug("não consegui obter o diff:", require("opencode-nvim.util").err_text(err))
+          log.debug("could not fetch the diff:", require("opencode-nvim.util").err_text(err))
           return present(request, nil)
         end
         present(request, diff_patches, source)
@@ -251,7 +251,7 @@ function M.on_event(ev)
     local request = ev.data or {}
     if not request.id then return end
     if request.sessionID and session.id() and request.sessionID ~= session.id() then
-      log.debug("permissão ignorada (outra sessão)", request.sessionID)
+      log.debug("ignoring permission from another session", request.sessionID)
       return
     end
     if active and active.id == request.id then return end
@@ -285,7 +285,7 @@ end
 function M.select()
   local pending_requests = M.pending()
   if #pending_requests == 0 then
-    log.notify("nenhuma permissão pendente")
+    log.notify("no pending permissions")
     return
   end
   local items = {}
@@ -293,7 +293,7 @@ function M.select()
     items[#items + 1] = string.format("%d) %s — %s", index, label(request),
       table.concat(request.resources or {}, " "))
   end
-  require("opencode-nvim.ui.picker").pick(items, { name = "permissões pendentes" }, function(choice)
+  require("opencode-nvim.ui.picker").pick(items, { name = "pending permissions" }, function(choice)
     if not choice then return end
     local index = tonumber(choice:match("^(%d+)"))
     if not index then return end

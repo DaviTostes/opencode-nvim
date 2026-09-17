@@ -75,7 +75,7 @@ local function reload_file(path)
       local name = vim.api.nvim_buf_get_name(bufnr)
       if name ~= "" and util.abs(name) == absolute then
         if vim.bo[bufnr].modified then
-          log.info(util.relative(name, session.directory()) .. " mudou no disco, mas o buffer tem alterações não salvas")
+          log.info(util.relative(name, session.directory()) .. " changed on disk, but the buffer has unsaved changes")
           return
         end
         if vim.bo[bufnr].buftype ~= "" then return end

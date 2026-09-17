@@ -1,125 +1,129 @@
 # opencode-nvim
 
-Usa o [OpenCode](https://opencode.ai) de dentro do Neovim **sem tirar o código
-de vista**.
+Use [OpenCode](https://opencode.ai) from inside Neovim **without losing sight of
+your code**.
 
-Em vez de abrir um terminal com o TUI (que toma a tela inteira), o painel é um
-float ancorado no canto inferior direito que **não rouba o foco**: a resposta
-chega em streaming enquanto você continua lendo e editando o arquivo. Quando a
-IA quer mexer num arquivo, o diff aparece num popup dentro do Neovim e você
-aprova com `<CR>` — antes de qualquer coisa ser gravada.
+Instead of opening a terminal with the TUI (which takes over the screen), the
+panel is a float anchored to the bottom right corner that **does not steal
+focus**: the answer streams in while you keep reading and editing the file. When
+the AI wants to touch a file, the diff shows up in a popup inside Neovim and you
+approve it with `<CR>` — before anything is written.
 
-- Streaming de texto, raciocínio e ferramentas no painel
-- Aprovação de edições com diff no editor (nada é escrito sem você ver)
-- Buffers alterados pela IA recarregam sozinhos, preservando o cursor
-- Contexto do editor: `@this`, `@buffer`, `@buffers`, `@diagnostics`, `@diff`
-- Sessões compartilhadas com o `opencode2` (abra no TUI e continue no Neovim)
-- **Zero dependências obrigatórias** — só o que já vem no Neovim
+- Text, reasoning and tool calls streaming in the panel
+- Edit approval with the diff inside the editor (nothing is written unseen)
+- Buffers changed by the AI reload on their own, keeping the cursor
+- Editor context: `@this`, `@buffer`, `@buffers`, `@diagnostics`, `@diff`
+- Sessions shared with `opencode2` (start it in the TUI, continue in Neovim)
+- **No required dependencies** — only what ships with Neovim
 
-## Requisitos
+## Requirements
 
-- Neovim **0.11+** (usa `vim.uv`, `vim.json`, `vim.base64`, `vim.fs`)
-- OpenCode **V2** (`opencode2`) no `PATH`
+- Neovim **0.11+** (uses `vim.uv`, `vim.json`, `vim.base64`, `vim.fs`)
+- OpenCode **V2** (`opencode2`) in `PATH`
 
-O plugin fala com o serviço HTTP do OpenCode (o mesmo de fundo que o TUI usa) e
-sobe um automaticamente se não houver nenhum. O cliente HTTP/SSE é Lua puro
-sobre `vim.uv` — sem `curl`, sem `plenary`.
+The plugin talks to the OpenCode HTTP service (the same background service the
+TUI uses) and starts one if none is running. The HTTP/SSE client is pure Lua on
+top of `vim.uv` — no `curl`, no `plenary`.
 
-## Instalação
+## Install
 
-Com `vim.pack`:
+With `vim.pack`:
 
 ```lua
-vim.pack.add({ { src = "https://github.com/<voce>/opencode-nvim" } })
+vim.pack.add({ { src = "https://github.com/<you>/opencode-nvim" } })
 require("opencode-nvim").setup({})
 ```
 
-Desenvolvimento local (aponta para este diretório):
+Local development (points at this directory):
 
 ```lua
 vim.opt.rtp:prepend("/home/toast/opencode-nvim")
 require("opencode-nvim").setup({})
 ```
 
-Sem chamar `setup()`, o plugin se configura sozinho no `VimEnter`.
+If `setup()` is never called the plugin configures itself with the defaults on
+`VimEnter`.
 
-## Uso
+## Usage
 
-| Keymap | Ação |
+| Keymap | Action |
 | --- | --- |
-| `<leader>tt` | abre/fecha o painel e foca o prompt |
-| `<leader>ta` | pergunta (com seleção visual, usa como `@this`) |
-| `<leader>tA` | pergunta com o buffer inteiro |
-| `<leader>ts` | escolhe sessão |
-| `<leader>tm` | escolhe modelo |
-| `<leader>tg` | escolhe agente |
-| `<leader>td` | diff do último turno |
-| `<leader>tx` | interrompe |
-| `<leader>tu` | desfaz o último turno |
+| `<leader>tt` | open/close the panel and focus the prompt |
+| `<leader>ta` | ask (with a visual selection it is used as `@this`) |
+| `<leader>tA` | ask with the whole buffer |
+| `<leader>ts` | pick a session |
+| `<leader>tm` | pick a model |
+| `<leader>tg` | pick an agent |
+| `<leader>td` | diff of the last turn |
+| `<leader>tx` | interrupt |
+| `<leader>tu` | undo the last turn |
 
-No painel: `i`/`a`/`<CR>` abre o prompt, `q`/`<Esc>` fecha, `<C-c>` interrompe,
-`gd` mostra o diff, `r` reenvia a última pergunta (útil quando o provedor
-oscila), `G` volta para o fim. Enquanto o turno roda aparecem "▸ pensando…" e o
-tempo no título (`● 12s`).
-No prompt: `<CR>` envia, `<C-j>` nova linha, `<C-x><C-o>` completa arquivos e
-placeholders, `<Esc>` fecha.
-No popup de diff/permissão: `<CR>` permite uma vez, `a` permite sempre, `n`
-rejeita (com mensagem opcional), `<Esc>` decide depois.
+In the panel: `i`/`a`/`<CR>` opens the prompt, `q`/`<Esc>` closes it, `<C-c>`
+interrupts, `gd` shows the diff, `r` resends the last prompt (handy when the
+provider hiccups), `G` goes to the end. While a turn runs the panel shows
+`▸ thinking…` and the title counts the elapsed time (`● 12s`).
 
-Comandos:
+In the prompt: `<CR>` sends, `<C-j>` newline, `<C-x><C-o>` completes files and
+placeholders, `<Esc>` closes.
+
+In the diff/permission popup: `<CR>` allows once, `a` allows always, `n` rejects
+(with an optional message), `<Esc>` decides later.
+
+Commands:
 
 ```
-:Opencode               abre/fecha o painel
-:OpencodeAsk [texto]    abre o prompt já preenchido
-:OpencodeNew            sessão nova no diretório atual
-:OpencodeAttach {id}    anexa uma sessão existente (inclusive do TUI)
-:OpencodeSessions       escolhe sessão
-:OpencodeModels         escolhe modelo
-:OpencodeAgents         escolhe agente
-:OpencodeInterrupt      interrompe a execução
-:OpencodeUndo           desfaz o último turno
-:OpencodeDiff           diff do último turno
-:OpencodeApproval       estado da aprovação no editor
-:OpencodeApprovalAgent  cria o agente de aprovação no config do OpenCode
-:OpencodePermissions    decide permissões deixadas para depois
-:OpencodeEvents         eventos recebidos do servidor (debug)
-:OpencodeHealth         checagem ao vivo da conexão
-:OpencodeLog [nível]    nível de log (debug/info/warn/error)
+:Opencode               open/close the panel
+:OpencodeAsk [text]     open the prompt pre-filled
+:OpencodeNew            new session in the current directory
+:OpencodeAttach {id}    attach an existing session (including a TUI one)
+:OpencodeSessions       pick a session
+:OpencodeModels         pick the model
+:OpencodeAgents         pick the agent
+:OpencodeInterrupt      interrupt the running turn
+:OpencodeUndo           undo the last turn
+:OpencodeDiff           diff of the last turn
+:OpencodeApproval       in-editor approval status
+:OpencodeApprovalAgent  create the approval agent in the OpenCode config
+:OpencodePermissions    decide permissions left for later
+:OpencodeEvents         events received from the server (debug)
+:OpencodeHealth         live connection check
+:OpencodeLog [level]    log level (debug/info/warn/error)
 ```
 
-## Modelo
+## Model
 
-Por padrão o plugin usa **o mesmo modelo que você usou por último no TUI** (lê
-`~/.local/state/opencode/model.json`). Isso não é só conveniência: o modelo
-*default* do servidor pode ser um modelo de free tier que se recusa a rodar —
-no `opencode-go` o default `opencode/union-alpha` responde
-`OpenCode 1.17.0 or newer is required to use the free tier`, que era a causa do
-"mandei e não aconteceu nada".
+By default the plugin uses **the same model you last used in the TUI** (it reads
+`~/.local/state/opencode/model.json`). That is not just convenience: the server
+default model can be a free tier model that refuses to run — on `opencode-go`
+the default `opencode/union-alpha` answers
+`OpenCode 1.17.0 or newer is required to use the free tier`, which was the cause
+of a first prompt silently doing nothing.
 
-Para fixar um modelo:
+To pin a model:
 
 ```lua
 model = { providerID = "opencode-go", id = "deepseek-v4.1-flash" }
 ```
 
-Trocar na sessão aberta: `<leader>tm`. Um modelo configurado que não exista no
-catálogo do projeto é descartado com aviso, em vez de quebrar a sessão.
+Switching in a live session: `<leader>tm`. A configured model that does not
+exist in the project catalogue is dropped with a warning instead of breaking the
+session.
 
-## Aprovação de edições
+## Edit approval
 
-O plugin tenta o modo mais seguro primeiro e degrada com elegância:
+The plugin tries the safest mode first and degrades gracefully:
 
-1. **Pré-aprovação (o ideal).** Se existir um agente cujas regras pedem
-   aprovação para `edit` (ou `shell`), as edições **pausam** e o diff da
-   proposta aparece no Neovim; só depois do seu `<CR>` o arquivo é gravado.
-   O plugin detecta esse agente automaticamente e, se não existir, o comando
-   `:OpencodeApprovalAgent` cria um (`opencode-nvim`) no config do OpenCode:
+1. **Pre-approval (the good one).** When an agent whose rules ask for approval on
+   `edit` (or `shell`) exists, edits **pause** and the proposed diff shows up in
+   Neovim; the file is written only after your `<CR>`. The plugin detects such an
+   agent automatically, and if there is none `:OpencodeApprovalAgent` creates one
+   (`opencode-nvim`) in the OpenCode config:
 
    ```jsonc
    {
      "agents": {
        "opencode-nvim": {
-         "description": "OpenCode dentro do Neovim: pede aprovação antes de editar e rodar shell",
+         "description": "OpenCode inside Neovim: asks for approval before editing files and running shell",
          "mode": "primary",
          "permissions": [
            { "action": "edit", "resource": "*", "effect": "ask" },
@@ -130,105 +134,105 @@ O plugin tenta o modo mais seguro primeiro e degrada com elegância:
    }
    ```
 
-   Depois rode `opencode2 service restart`. Para conferir: `:OpencodeApproval`.
+   Then run `opencode2 service restart`. To check: `:OpencodeApproval`.
 
-2. **Revisão depois do turno (padrão sem config).** O turno roda, e ao terminar
-   o plugin mostra o diff num popup: `<CR>` mantém, `r` **desfaz o turno**
-   (restaura os arquivos) e `<Esc>` fecha. `:OpencodeUndo` faz o mesmo.
-   Para só avisar em vez de abrir popup: `approval = { review = "notify" }`;
-   para desligar: `approval = { review = false }`.
+2. **Review after the turn (works with no config).** The turn runs and, when it
+   finishes, the plugin shows the diff in a popup: `<CR>` keeps it, `r` **undoes
+   the turn** (restores the files), `<Esc>` closes it. `:OpencodeUndo` does the
+   same from outside the popup. To only warn instead of opening a popup:
+   `approval = { review = "notify" }`; to disable it: `approval = { review = false }`.
 
-O `u` do Neovim continua funcionando normalmente nos buffers.
+Neovim's own `u` keeps working on the buffers.
 
-## Configuração
+## Configuration
 
 ```lua
 require("opencode-nvim").setup({
   server = { command = "opencode2", autostart = true },
-  agent = "build",                       -- agente padrão
+  agent = "build",                       -- default agent
   approval = {
     review = "popup",                    -- "popup" | "notify" | false
-    agent = "opencode-nvim",             -- agente de pré-aprovação
-    auto_detect = true,                  -- usa qualquer agente que peça aprovação
+    agent = "opencode-nvim",             -- pre-approval agent
+    auto_detect = true,                  -- use any agent that asks for approval
   },
   reload = { enabled = true, set_autoread = true },
   context = { auto = true, max_bytes = 200 * 1024 },
   ui = {
     panel = { width = 0.45, height = 0.35, max_width = 110, max_height = 30 },
-    focus_after_submit = "code",         -- volta pro código depois de enviar
+    focus_after_submit = "code",         -- go back to the code after sending
   },
 })
 ```
 
-Todas as opções, comandos, eventos e a API Lua estão em
+Every option, command, event and the Lua API are documented in
 [`doc/opencode-nvim.txt`](doc/opencode-nvim.txt) (`:help opencode-nvim`).
 
-## Contexto do editor
+## Editor context
 
-| Marcador | Vira |
+| Marker | Expands to |
 | --- | --- |
-| `@this` | linha atual, ou a seleção visual se o prompt veio dela |
-| `@buffer` | arquivo atual (buffer não salvo vai como anexo) |
-| `@buffers` | arquivos abertos |
-| `@diagnostics` | diagnósticos do buffer/intervalo |
-| `@diff` | `git diff` do diretório da sessão |
+| `@this` | current line, or the visual selection if the prompt came from one |
+| `@buffer` | current file (an unsaved buffer is sent as an attachment) |
+| `@buffers` | open buffers |
+| `@diagnostics` | diagnostics of the buffer/range |
+| `@diff` | `git diff` of the session directory |
 
-## Como funciona
+## How it works
 
 ```
-Neovim (Lua)                            OpenCode V2
-  │  1. descobre o serviço                 │
+Neovim (Lua)                             OpenCode V2
+  │  1. discover the service               │
   │     ~/.local/state/opencode/service.json
-  │  2. GET /api/health      (basic auth)  │
+  │  2. GET /api/health     (basic auth)   │
   │───────────────────────────────────────>│
-  │  3. GET /api/location + /api/agent     │  (agents são por location)
+  │  3. GET /api/location + /api/agent     │  (agents are per location)
   │  4. POST /api/session                  │
   │───────────────────────────────────────>│
   │  5. GET /api/event  (SSE)              │
   │<───────────────────────────────────────│
-  │     session.text.delta   → painel      │
-  │     session.tool.*       → painel      │
+  │     session.text.delta   → panel       │
+  │     session.tool.*       → panel       │
   │     permission.asked     → popup       │
   │     file.edited          → checktime   │
-  │     session.execution.*  → fim do turno│
+  │     session.execution.*  → end of turn │
 ```
 
-`mini.pick` (pickers), `mini.icons` e `mini.diff` são usados **se** estiverem
-disponíveis; nada é obrigatório.
+`mini.pick` (pickers), `mini.icons` and `mini.diff` are used **if** they are
+installed; nothing is required.
 
-## Detalhes do Beta V2 (o que o plugin contorna)
+## Beta V2 notes (what the plugin works around)
 
-Enquanto a API V2 está em beta, alguns comportamentos divergem do OpenAPI
-publicado. Estes foram verificados contra `0.0.0-beta-19271` e estão tratados no
-código:
+While the V2 API is in beta some behaviour differs from the published OpenAPI.
+These were verified against `0.0.0-beta-19271` and are handled in the code:
 
-| Observação | Contorno no plugin |
+| Observation | Workaround in the plugin |
 | --- | --- |
-| `permissions` enviado em `POST /api/session` é ignorado (não é persistido nem aplicado) | aprovação via **agente** (`agents.<id>.permissions`) |
-| `POST .../permission/{id}/reply` espera `{"reply": "once"}` e não `{"decision": ...}` | manda `reply` e cai para `decision` se levar 400 |
-| `GET /api/agent` é escopado por location e só fica completo depois que a location é carregada | `GET /api/location` antes, com retry pelo agente esperado |
-| `GET /api/session/{id}/diff` não está roteado (404 vazio) | fallback `GET /api/vcs/diff?mode=working` |
-| Num turno normal **não** chega `session.idle` | o fim do turno é `session.execution.succeeded/failed/interrupted` |
-| `session.text.ended` traz o texto completo da parte | o renderer conserta deltas perdidos com ele |
-| Snapshots (diff do turno e restauração de arquivos no revert) usam **git** | o plugin faz fallback pro working tree e avisa quando não é repo |
-| O provedor `opencode-go` oscila e às vezes devolve erros enganosos ("OpenCode 1.17.0 or newer is required to use the free tier", "Endpoint is unavailable") | o motivo real aparece no painel e `r` reenvia a última pergunta |
+| `permissions` sent to `POST /api/session` is ignored (not stored, not enforced) | approval through an **agent** (`agents.<id>.permissions`) |
+| `POST .../permission/{id}/reply` expects `{"reply": "once"}`, not `{"decision": ...}` | sends `reply` and falls back to `decision` on a 400 |
+| `GET /api/agent` is location-scoped and only complete after the location is loaded | calls `GET /api/location` first and retries until the expected agent shows up |
+| `GET /api/session/{id}/diff` is not routed (empty 404) | falls back to `GET /api/vcs/diff?mode=working` |
+| A normal turn **does not** emit `session.idle` | end of turn is `session.execution.succeeded/failed/interrupted` |
+| `session.text.ended` carries the full part text | the renderer repairs dropped deltas with it |
+| Snapshots (turn diff and file restore on revert) rely on **git** | falls back to the working tree diff and warns outside a repo |
+| The `opencode-go` provider is flaky and sometimes returns misleading errors ("OpenCode 1.17.0 or newer is required to use the free tier", "Endpoint is unavailable") | the real reason shows in the panel and `r` resends the last prompt |
 
-## Testes
+## Tests
 
 ```sh
-make test           # HTTP + SSE + UI com servidor falso (sem gastar tokens)
-make e2e            # protocolo real: streaming de texto (1 prompt mínimo)
-make e2e-approval   # fluxo de aprovação real, com popup e revert (1 prompt)
-make probe          # sonda config/agents/permissions (sem gastar tokens)
-make lint           # checagem de sintaxe de todos os .lua
+make test           # HTTP + SSE + UI against a fake server (no tokens spent)
+make e2e            # real protocol: text streaming (one tiny prompt)
+make e2e-approval   # real approval flow, with popup and revert (one prompt)
+make e2e-panel      # full interactive flow through the panel (one prompt)
+make probe          # config/agents/permissions probe (no tokens spent)
+make lint           # syntax check of every .lua file
 ```
 
 ## Status
 
-Beta, escrito contra a API V2 (experimental). Se algo do servidor mudar,
-`:OpencodeEvents` mostra exatamente o que chegou e
-`log = { level = "debug", file = "/tmp/opencode-nvim.log" }` grava tudo.
+Beta, written against the (experimental) V2 API. If something changes on the
+server side, `:OpencodeEvents` shows exactly what arrived and
+`log = { level = "debug", file = "/tmp/opencode-nvim.log" }` records everything.
 
-## Licença
+## License
 
 MIT

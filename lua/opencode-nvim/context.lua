@@ -57,7 +57,7 @@ local function fmt_this(opts)
     first, last = cursor[1], cursor[1]
   end
   local name = vim.api.nvim_buf_get_name(bufnr)
-  local label = name ~= "" and util.relative(name, directory(opts)) or "[sem nome]"
+  local label = name ~= "" and util.relative(name, directory(opts)) or "[no name]"
   local location = first == last and string.format("%s:%d", label, first)
     or string.format("%s:%d-%d", label, first, last)
   local lines = vim.api.nvim_buf_get_lines(bufnr, first - 1, last, false)
@@ -76,14 +76,14 @@ local function fmt_buffer(opts, files)
   local contents = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
   local limit = cfg.get().context.max_bytes
   if #contents > limit then
-    log.warn(string.format("%s tem %d bytes; vou mencionar o arquivo em vez de anexar", label, #contents))
+    log.warn(string.format("%s is %d bytes; mentioning the file instead of attaching it", label, #contents))
     return "@" .. label
   end
   files[#files + 1] = {
     uri = "data:text/plain;base64," .. vim.base64.encode(contents),
     name = label,
   }
-  return string.format("[anexo não salvo: %s]", label)
+  return string.format("[unsaved attachment: %s]", label)
 end
 
 local function fmt_buffers(opts)
@@ -97,7 +97,7 @@ local function fmt_buffers(opts)
       if #out >= 20 then break end
     end
   end
-  if #out == 0 then return "(nenhum arquivo aberto)" end
+  if #out == 0 then return "(no open files)" end
   return table.concat(out, ", ")
 end
 
@@ -119,14 +119,14 @@ local function fmt_diagnostics(opts)
       if #out >= max then break end
     end
   end
-  if #out == 0 then return "(sem diagnósticos)" end
+  if #out == 0 then return "(no diagnostics)" end
   return table.concat(out, "\n")
 end
 
 local function fmt_diff(opts)
   local dir = directory(opts)
   local lines = vim.fn.systemlist({ "git", "-C", dir, "diff", "--no-color" })
-  if vim.v.shell_error ~= 0 or #lines == 0 then return "(sem alterações)" end
+  if vim.v.shell_error ~= 0 or #lines == 0 then return "(no changes)" end
   lines = util.truncate_lines(lines, cfg.get().context.diff_max_lines)
   return "```diff\n" .. table.concat(lines, "\n") .. "\n```"
 end

@@ -19,7 +19,7 @@ local M = {}
 function M.url_parts(url)
   if type(url) ~= "string" then return nil, nil, "invalid url" end
   if url:sub(1, 5) == "https" then
-    return nil, nil, "https não é suportado (use o servidor local em http)"
+    return nil, nil, "https is not supported (use the local http server)"
   end
   local host, port = url:match("^http://([^:/]+):(%d+)")
   if not host then
@@ -30,7 +30,7 @@ function M.url_parts(url)
     host, port = url:match("^([^:/]+):(%d+)")
     port = port or 80
   end
-  if not host then return nil, nil, "url inválida: " .. url end
+  if not host then return nil, nil, "invalid url: " .. url end
   return host, tonumber(port) or 80
 end
 
@@ -97,7 +97,7 @@ function Parser:_chunk()
 
   local size = tonumber(self.buf:sub(1, nl - 1):match("^%x+") or "", 16)
   if not size then
-    self:_finish("chunk header inválido")
+    self:_finish("invalid chunk header")
     return true
   end
 
@@ -174,7 +174,7 @@ end
 function Parser:eof()
   if self.done then return end
   if self.state == "length" and self.remaining > 0 then
-    return self:_finish("conexão encerrada antes do corpo completo")
+    return self:_finish("connection closed before the full body")
   end
   if self.state == "eof" and #self.buf > 0 then
     if self.on_data then
@@ -261,13 +261,13 @@ function M.request(server, opts, cb)
 
   conn:connect(host, port, function(connect_err)
     if finished then return end
-    if connect_err then return finish("conexão falhou: " .. tostring(connect_err)) end
+    if connect_err then return finish("connect failed: " .. tostring(connect_err)) end
     conn:write(payload, function(write_err)
       if finished then return end
-      if write_err then return finish("escrita falhou: " .. tostring(write_err)) end
+      if write_err then return finish("write failed: " .. tostring(write_err)) end
       conn:read_start(function(read_err, data)
         if finished then return end
-        if read_err then return finish("leitura falhou: " .. tostring(read_err)) end
+        if read_err then return finish("read failed: " .. tostring(read_err)) end
         if data then
           parser:feed(data)
         else
@@ -286,7 +286,7 @@ function M.request(server, opts, cb)
 
   return {
     cancel = function()
-      finish("cancelado")
+      finish("cancelled")
     end,
   }
 end

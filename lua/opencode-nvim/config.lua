@@ -27,15 +27,15 @@ M.defaults = {
   model = nil,
   permissions = { edit = "ask", shell = "ask" },
   approval = {
-    -- "popup": mostra o diff do turno com opção de desfazer; "notify" só avisa;
-    -- false desliga.
+    -- "popup": show the turn diff with an undo option; "notify": just warn;
+    -- false disables it.
     review = "popup",
-    -- Agente (definido no config do OpenCode) cujas regras pedem aprovação.
-    -- Se ele existir, as edições pausam e o diff é aprovado antes de gravar.
+    -- Agent (defined in the OpenCode config) whose rules ask for approval.
+    -- When it exists, edits pause and the diff is approved before writing.
     agent = "opencode-nvim",
-    -- Usa qualquer agente do servidor que peça aprovação para `edit`.
+    -- Use any server agent whose rules ask for approval on `edit`.
     auto_detect = true,
-    -- Regras gravadas por `:OpencodeApprovalAgent`.
+    -- Rules written by `:OpencodeApprovalAgent`.
     permissions = {
       { action = "edit", resource = "*", effect = "ask" },
       { action = "shell", resource = "*", effect = "ask" },

@@ -247,15 +247,15 @@ function M.resolve_model(explicit, catalog)
           return { providerID = known.providerID, id = known.id, variant = candidate.variant or known.variant }
         end
       end
-      return nil, string.format("%s/%s não está disponível", candidate.providerID, candidate.id)
+      return nil, string.format("%s/%s is not available", candidate.providerID, candidate.id)
     end
   end
   return nil
 end
 
 local function create_session(directory, agent, model, opts, retry, cb)
-  log.debug("criando sessão em", directory, "agente", tostring(agent),
-    "modelo", model and (model.providerID .. "/" .. model.id) or "padrão do servidor")
+  log.debug("creating session in", directory, "agent", tostring(agent),
+    "model", model and (model.providerID .. "/" .. model.id) or "server default")
   api.create_session({
     location = { directory = directory },
     agent = agent,
@@ -266,7 +266,7 @@ local function create_session(directory, agent, model, opts, retry, cb)
     if err then
       if agent and not retry then
         -- A per-project agent may not exist for this directory yet.
-        log.debug("agente", agent, "recusado:", vim.inspect(err))
+        log.debug("agent", agent, "rejected:", vim.inspect(err))
         return create_session(directory, nil, model, opts, true, cb)
       end
       return cb(err)
@@ -296,7 +296,7 @@ local function finalize_agent(info, cb)
     if candidate and better ~= info.agent and agent_asks_for_edit(candidate) then
       return api.set_agent(info.id, better, function(switch_err, updated)
         if switch_err then
-          log.debug("não consegui ativar o agente de aprovação:", vim.inspect(switch_err))
+          log.debug("could not enable the approval agent:", vim.inspect(switch_err))
           info.approval = false
           M.set_current(info)
           return cb(nil, info)
@@ -342,7 +342,7 @@ function M.ensure(opts, cb)
     M.models_for(directory, function(_, catalog)
       local model, dropped = M.resolve_model(opts.model, catalog)
       if dropped then
-        log.warn(dropped .. " — usando o modelo padrão do servidor")
+        log.warn(dropped .. " — falling back to the server default model")
       end
       create_session(directory, agent, model, opts, false, function(err, info)
         if err then return cb(err) end
@@ -390,7 +390,7 @@ end
 function M.revert_last_turn(cb)
   local id = M.id()
   if not id then
-    if cb then cb("nenhuma sessão ativa") end
+    if cb then cb("no active session") end
     return
   end
   api.messages(id, { limit = 20, order = "desc" }, function(err, page)
@@ -420,7 +420,7 @@ function M.revert_last_turn(cb)
         return
       end
     end
-    if cb then cb("nenhum turno para desfazer") end
+    if cb then cb("no turn to undo") end
   end)
 end
 
@@ -467,7 +467,7 @@ end
 --- snapshots and "working" when it is the repository's working tree.
 function M.diff(opts, cb)
   local current = M.current
-  if not current then return cb("nenhuma sessão ativa", nil) end
+  if not current then return cb("no active session", nil) end
   opts = opts or {}
   local directory = current.location and current.location.directory
 

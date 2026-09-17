@@ -13,7 +13,7 @@ local Renderer = require("opencode-nvim.ui.render")
 --- code window while the answer streams beside it.
 local M = {}
 
-local THINKING_LINE = "▸ pensando…"
+local THINKING_LINE = "▸ thinking…"
 
 local state = {
   buf = nil,
@@ -76,7 +76,7 @@ function M.title()
     if total > 0 then parts[#parts + 1] = string.format("%.1fk", total / 1000) end
     if cost and cost > 0 then parts[#parts + 1] = string.format("$%.4f", cost) end
   else
-    parts[#parts + 1] = "opencode · sem sessão"
+    parts[#parts + 1] = "opencode · no session"
   end
   if state.status == "running" then
     local elapsed = state.running_since
@@ -117,7 +117,7 @@ function M.start_ticker()
     local elapsed = state.running_since and ((vim.uv or vim.loop).now() - state.running_since) / 1000 or 0
     if elapsed > 30 and not state.warned_slow then
       state.warned_slow = true
-      M.renderer():note("sem resposta há 30s — o provedor pode estar lento; <C-c> interrompe", "meta")
+      M.renderer():note("no response for 30s — the provider may be slow; <C-c> interrupts", "meta")
       M.scroll_soon()
     end
   end))
@@ -149,7 +149,7 @@ local function panel_config()
   local width, height = panel_geometry()
   state.geom = { width, height }
   local lift = 0
-  if input_open() then lift = M.input_height() + 2 end
+  if input_open() then lift = M.input_height() + 4 end
   return {
     relative = "editor",
     anchor = "SE",
@@ -173,18 +173,18 @@ end
 
 function M.set_keymaps(buf)
   local opts = { buffer = buf, nowait = true, silent = true }
-  vim.keymap.set("n", "q", function() M.close() end, vim.tbl_extend("force", opts, { desc = "fechar painel" }))
-  vim.keymap.set("n", "<Esc>", function() M.close() end, vim.tbl_extend("force", opts, { desc = "fechar painel" }))
-  vim.keymap.set("n", "i", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "abrir prompt" }))
-  vim.keymap.set("n", "a", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "abrir prompt" }))
-  vim.keymap.set("n", "<CR>", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "abrir prompt" }))
-  vim.keymap.set("n", "<C-c>", function() M.interrupt() end, vim.tbl_extend("force", opts, { desc = "interromper" }))
-  vim.keymap.set("n", "gd", function() M.show_diff() end, vim.tbl_extend("force", opts, { desc = "diff do turno" }))
-  vim.keymap.set("n", "r", function() M.retry() end, vim.tbl_extend("force", opts, { desc = "reenviar a última pergunta" }))
+  vim.keymap.set("n", "q", function() M.close() end, vim.tbl_extend("force", opts, { desc = "close panel" }))
+  vim.keymap.set("n", "<Esc>", function() M.close() end, vim.tbl_extend("force", opts, { desc = "close panel" }))
+  vim.keymap.set("n", "i", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "open prompt" }))
+  vim.keymap.set("n", "a", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "open prompt" }))
+  vim.keymap.set("n", "<CR>", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "open prompt" }))
+  vim.keymap.set("n", "<C-c>", function() M.interrupt() end, vim.tbl_extend("force", opts, { desc = "interrupt" }))
+  vim.keymap.set("n", "gd", function() M.show_diff() end, vim.tbl_extend("force", opts, { desc = "turn diff" }))
+  vim.keymap.set("n", "r", function() M.retry() end, vim.tbl_extend("force", opts, { desc = "resend last prompt" }))
   vim.keymap.set("n", "G", function()
     state.autoscroll = true
     M.scroll_to_bottom()
-  end, vim.tbl_extend("force", opts, { desc = "ir para o fim" }))
+  end, vim.tbl_extend("force", opts, { desc = "go to the end" }))
 end
 
 function M.ensure_buf()
@@ -297,9 +297,9 @@ function M.input_buf()
   vim.keymap.set({ "i", "n" }, "<C-c>", function() M.interrupt() end, opts)
   vim.keymap.set({ "i", "n" }, "<C-l>", function()
     if cfg.get().permissions == false then
-      log.notify("nenhuma aprovação configurada (permissions = false)")
+      log.notify("no approval configured (permissions = false)")
     else
-      log.notify("permissões da sessão: edit/shell = ask")
+      log.notify("session permissions: edit/shell = ask")
     end
   end, opts)
   vim.bo[buf].omnifunc = "v:lua.opencode_nvim_omnifunc"
@@ -350,21 +350,18 @@ function M.update_input_win()
   local width = select(1, panel_geometry())
   local ui = cfg.get().ui.input or {}
 
-  -- The panel anchors SE at (lines-2, columns-2), so its content spans
-  -- [columns-1-width, columns-2]. The prompt anchors SW, where `col` is the
-  -- content's left edge, so this lines both up exactly.
-  local left = math.max(0, vim.o.columns - 1 - width)
-
+  -- Same anchor, column and width as the panel: the two boxes line up by
+  -- construction, whatever the border does to the anchor arithmetic.
   local config = {
     relative = "editor",
-    anchor = "SW",
+    anchor = "SE",
     row = vim.o.lines - 2,
-    col = left,
+    col = vim.o.columns - 2,
     width = width,
     height = M.input_height(),
     style = "minimal",
     border = ui.border or "rounded",
-    title = " prompt · enter envia · esc fecha ",
+    title = " prompt · enter sends · esc closes ",
     title_pos = "left",
     zindex = 60,
   }
@@ -531,10 +528,10 @@ end
 --- Sends the last prompt again (provider hiccups are common).
 function M.retry()
   if not state.last_prompt then
-    return log.notify("nada para reenviar ainda")
+    return log.notify("nothing to resend yet")
   end
   if state.status == "running" then
-    return log.notify("já tem um turno rodando")
+    return log.notify("a turn is already running")
   end
   local prompt = state.last_prompt
   M.send(prompt.text, prompt.opts)
@@ -544,9 +541,9 @@ function M.show_diff()
   session.diff({ context = 3 }, function(err, patches, source)
     if err then return log.notify("diff: " .. err_text(err), vim.log.levels.WARN) end
     if type(patches) ~= "table" or #patches == 0 then
-      return log.notify("nenhuma mudança para mostrar")
+      return log.notify("no changes to show")
     end
-    local title = source == "working" and "mudanças no working tree" or "diff do último turno"
+    local title = source == "working" and "working tree changes" or "diff of the last turn"
     require("opencode-nvim.ui.diff").patches({ title = title, patches = patches })
   end)
 end
@@ -566,21 +563,21 @@ function M.review_turn()
       for _, patch in ipairs(patches) do
         summary[#summary + 1] = string.format("%s (+%d -%d)", patch.file or "?", patch.additions or 0, patch.deletions or 0)
       end
-      log.notify(string.format("%d arquivo(s) alterado(s): %s — :OpencodeDiff para revisar, :OpencodeUndo para desfazer",
+      log.notify(string.format("%d file(s) changed: %s — :OpencodeDiff to review, :OpencodeUndo to undo",
         #patches, table.concat(summary, ", ")), vim.log.levels.INFO)
       return
     end
 
     require("opencode-nvim.ui.diff").review({
-      title = source == "working" and "mudanças no working tree" or "mudanças do turno",
+      title = source == "working" and "working tree changes" or "turn changes",
       patches = patches,
       on_revert = function()
         session.revert_last_turn(function(revert_err)
           if revert_err then
-            log.notify("desfazer: " .. err_text(revert_err), vim.log.levels.ERROR)
+            log.notify("undo: " .. err_text(revert_err), vim.log.levels.ERROR)
           else
-            log.notify("turno desfeito")
-            M.renderer():note("turno desfeito (arquivos restaurados)", "meta")
+            log.notify("turn undone")
+            M.renderer():note("turn undone (files restored)", "meta")
           end
         end)
       end,
@@ -657,7 +654,7 @@ function M.load_history()
   local limit = cfg.get().session.history or 30
   if limit <= 0 then return end
   api.messages(id, { limit = limit, order = "desc" }, function(err, page)
-    if err then return log.debug("histórico:", err_text(err)) end
+    if err then return log.debug("history:", err_text(err)) end
     local messages = type(page) == "table" and page.data or {}
     if type(messages) ~= "table" or #messages == 0 then return end
     table.sort(messages, function(a, b)
@@ -813,7 +810,7 @@ function M.on_event(ev)
     if message then
       renderer:error(tostring(message))
     else
-      renderer:error("execução falhou")
+      renderer:error("execution failed")
       -- The reason lives in the assistant message, not in the event.
       if session.id() then
         api.messages(session.id(), { limit = 5, order = "desc" }, function(err, page)
@@ -836,15 +833,15 @@ function M.on_event(ev)
       end
     end
   elseif kind == "session.error" then
-    renderer:error(util.pick_string(data, { "message", "error", "text" }) or "erro na sessão")
+    renderer:error(util.pick_string(data, { "message", "error", "text" }) or "session error")
   elseif kind == "session.retry.scheduled" then
-    local attempt = data.attempt and string.format(" (tentativa %d)", data.attempt) or ""
+    local attempt = data.attempt and string.format(" (attempt %d)", data.attempt) or ""
     local reason = util.deep_find(data, { "message", "error" })
-    renderer:note("nova tentativa agendada" .. attempt .. (reason and (": " .. tostring(reason)) or ""), "meta")
+    renderer:note("retry scheduled" .. attempt .. (reason and (": " .. tostring(reason)) or ""), "meta")
   elseif kind == "session.compaction.started" then
-    renderer:note("compactando o contexto…", "meta")
+    renderer:note("compacting context…", "meta")
   elseif kind == "session.compaction.failed" then
-    renderer:error("a compactação do contexto falhou")
+    renderer:error("context compaction failed")
   elseif kind == "session.idle" then
     M.set_status("idle")
     renderer:finalize()

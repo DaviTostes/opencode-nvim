@@ -60,15 +60,15 @@ local function open_float(opts)
   active = { buf = buf, win = win, on_close = opts.on_close, previous_win = previous_win }
 
   local keymaps = vim.deepcopy(opts.keymaps or {})
-  keymaps[#keymaps + 1] = { "q", close, "fechar" }
-  keymaps[#keymaps + 1] = { "<Esc>", close, "fechar" }
+  keymaps[#keymaps + 1] = { "q", close, "close" }
+  keymaps[#keymaps + 1] = { "<Esc>", close, "close" }
 
   for _, map in ipairs(keymaps) do
     vim.keymap.set("n", map[1], map[2], {
       buffer = buf,
       nowait = true,
       silent = true,
-      desc = "opencode-nvim: " .. tostring(map[3] or "ação"),
+      desc = "opencode-nvim: " .. tostring(map[3] or "action"),
     })
   end
 
@@ -86,7 +86,7 @@ local function patch_lines(patches)
     end
     lines[#lines + 1] = ""
   end
-  if #lines == 0 then lines = { "(nenhuma mudança no diff)" } end
+  if #lines == 0 then lines = { "(no changes in the diff)" } end
   return lines
 end
 
@@ -97,17 +97,17 @@ function M.patches(opts)
   local keymaps = {}
 
   if opts.on_choice then
-    lines[#lines + 1] = "<CR> permitir uma vez    a permitir sempre    n rejeitar    <Esc> decidir depois"
-    keymaps[#keymaps + 1] = { "<CR>", function() local cb = opts.on_choice; close(); cb("once") end, "permitir uma vez" }
-    keymaps[#keymaps + 1] = { "a", function() local cb = opts.on_choice; close(); cb("always") end, "permitir sempre" }
+    lines[#lines + 1] = "<CR> allow once    a allow always    n reject    <Esc> decide later"
+    keymaps[#keymaps + 1] = { "<CR>", function() local cb = opts.on_choice; close(); cb("once") end, "allow once" }
+    keymaps[#keymaps + 1] = { "a", function() local cb = opts.on_choice; close(); cb("always") end, "allow always" }
     keymaps[#keymaps + 1] = { "n", function()
       local cb = opts.on_choice
       close()
-      vim.ui.input({ prompt = "Motivo da rejeição (opcional): " }, function(text)
+      vim.ui.input({ prompt = "Rejection reason (optional): " }, function(text)
         cb("reject", text)
       end)
-    end, "rejeitar" }
-    keymaps[#keymaps + 1] = { "<Esc>", function() local cb = opts.on_choice close() cb(nil) end, "decidir depois" }
+    end, "reject" }
+    keymaps[#keymaps + 1] = { "<Esc>", function() local cb = opts.on_choice close() cb(nil) end, "decide later" }
   end
 
   return open_float({
@@ -123,23 +123,23 @@ end
 function M.confirm(opts)
   local lines = vim.deepcopy(opts.body or {})
   lines[#lines + 1] = ""
-  lines[#lines + 1] = "<CR> permitir uma vez    a permitir sempre    n rejeitar    <Esc> decidir depois"
+  lines[#lines + 1] = "<CR> allow once    a allow always    n reject    <Esc> decide later"
 
   local keymaps = {
-    { "<CR>", function() local cb = opts.on_choice; close(); cb("once") end, "permitir uma vez" },
-    { "a", function() local cb = opts.on_choice; close(); cb("always") end, "permitir sempre" },
+    { "<CR>", function() local cb = opts.on_choice; close(); cb("once") end, "allow once" },
+    { "a", function() local cb = opts.on_choice; close(); cb("always") end, "allow always" },
     { "n", function()
       local cb = opts.on_choice
       close()
-      vim.ui.input({ prompt = "Motivo da rejeição (opcional): " }, function(text)
+      vim.ui.input({ prompt = "Rejection reason (optional): " }, function(text)
         cb("reject", text)
       end)
-    end, "rejeitar" },
-    { "<Esc>", function() local cb = opts.on_choice close() cb(nil) end, "decidir depois" },
+    end, "reject" },
+    { "<Esc>", function() local cb = opts.on_choice close() cb(nil) end, "decide later" },
   }
 
   return open_float({
-    title = opts.title or "permissão",
+    title = opts.title or "permission",
     lines = lines,
     height = 0.4,
     width = 0.7,
@@ -151,17 +151,17 @@ end
 ---@param opts { title?: string, patches: table[], on_revert?: fun() }
 function M.review(opts)
   local lines = patch_lines(opts.patches)
-  lines[#lines + 1] = "<CR> manter    r desfazer o turno    <Esc> fechar"
+  lines[#lines + 1] = "<CR> keep    r undo the turn    <Esc> close"
   return open_float({
-    title = opts.title or "mudanças do turno",
+    title = opts.title or "turn changes",
     lines = lines,
     filetype = "diff",
     keymaps = {
-      { "<CR>", close, "manter" },
+      { "<CR>", close, "keep" },
       { "r", function()
         close()
         if opts.on_revert then opts.on_revert() end
-      end, "desfazer o turno" },
+      end, "undo the turn" },
     },
   })
 end

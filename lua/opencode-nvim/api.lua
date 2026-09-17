@@ -22,7 +22,7 @@ local function request(opts, cb, retried)
       end
       if err then return cb(err) end
       if status == 401 then
-        return cb(string.format("não autorizado (401) — confira a senha em %s", discovery.service_file()))
+        return cb(string.format("unauthorized (401) — check the password in %s", discovery.service_file()))
       end
       if status < 200 or status >= 300 then
         local message = text
@@ -170,7 +170,7 @@ function M.reply_permission(id, request_id, decision, message, cb)
     request({ method = "POST", path = path, body = body, timeout = 15000 },
       function(err, decoded, status)
         if err and allow_fallback and type(err) == "table" and err.code == 400 then
-          log.debug("reply com a chave '" .. key .. "' foi recusado; tentando a outra")
+          log.debug("reply com a chave '" .. key .. "' was rejected; trying the other one")
           return send(key == "reply" and "decision" or "reply", false)
         end
         if cb then cb(err, decoded, status) end
@@ -270,7 +270,7 @@ function M.ensure(cb, options)
     -- fails with a confusing error.
     M.agents(function(agents_err, agents)
       if agents_err or type(agents) ~= "table" then
-        log.debug("não consegui listar agentes:", agents_err)
+        log.debug("could not list agents:", agents_err)
         return create()
       end
       local known = false
@@ -282,7 +282,7 @@ function M.ensure(cb, options)
         end
       end
       if not known then
-        log.warn(string.format("agente '%s' não existe; usando o padrão", agent))
+        log.warn(string.format("agent '%s' does not exist; using the default", agent))
         agent = nil
       end
       create()

@@ -52,7 +52,7 @@ local function safe(fn, event)
   local message = tostring(err)
   if reported[message] then return end
   reported[message] = true
-  log.error(string.format("handler de '%s' falhou: %s", tostring(event.type), message))
+  log.error(string.format("handler for '%s' failed: %s", tostring(event.type), message))
 end
 
 local function dispatch(event)

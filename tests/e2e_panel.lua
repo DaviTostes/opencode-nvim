@@ -17,7 +17,7 @@ local session = require("opencode-nvim.session")
 
 local workdir = os.getenv("E2E_DIR") or vim.fs.joinpath(vim.fn.tempname())
 vim.fn.mkdir(workdir, "p")
-io.write("diretório: " .. workdir .. "\n")
+io.write("directory: " .. workdir .. "\n")
 
 local failures = 0
 local function report(name, ok, detail)
@@ -64,13 +64,13 @@ event.on_any(function(ev)
 end)
 
 if not wait(function() return require("opencode-nvim.sse").connected() end, 15000) then
-  io.write("não conectei no stream\n")
+  io.write("could not connect to the stream\n")
   os.exit(1)
 end
 
 -- A code buffer to come back to after sending.
 vim.cmd("enew")
-vim.api.nvim_buf_set_lines(0, 0, -1, false, { "local x = 1", "-- código de verdade" })
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { "local x = 1", "-- real code" })
 vim.bo.filetype = "lua"
 local code_win = vim.api.nvim_get_current_win()
 vim.api.nvim_win_set_cursor(code_win, { 1, 0 })
@@ -79,8 +79,8 @@ vim.api.nvim_win_set_cursor(code_win, { 1, 0 })
 vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Space>ta", true, false, true), "x", false)
 vim.wait(600, function() return false end, 50)
 
-report("o keymap abriu o painel", panel.visible(), "painel não ficou visível")
-report("o prompt abriu focado", panel.state.input.win ~= nil
+report("the keymap opened the panel", panel.visible(), "panel is not visible")
+report("the prompt opened focused", panel.state.input.win ~= nil
   and vim.api.nvim_get_current_win() == panel.state.input.win,
   string.format("input.win=%s current=%s", tostring(panel.state.input.win), tostring(vim.api.nvim_get_current_win())))
 
@@ -88,22 +88,22 @@ report("o prompt abriu focado", panel.state.input.win ~= nil
 local attached = false
 session.new({ directory = workdir }, function(err, info) attached = info ~= nil end)
 wait(function() return attached end, 60000)
-report("sessão criada no diretório de teste", attached, "session.new falhou")
+report("session created in the test directory", attached, "session.new failed")
 
 -- 2. Type a prompt (simulating the user) and submit.
 local buf = panel.state.input.buf
-vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Diga apenas: tchau" })
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Say only: bye" })
 panel.submit()
 wait(function() return not panel.state.input.win or panel.state.input.win == nil end, 2000)
 vim.wait(200, function() return false end, 50)
 
 local current = vim.api.nvim_get_current_win()
-report("o foco voltou para o código depois de enviar", current == code_win,
+report("focus went back to the code after sending", current == code_win,
   string.format("win atual=%d code_win=%d", current, code_win))
 
-report("o painel mostra a pergunta", (function()
+report("the panel shows the prompt", (function()
   local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), "\n")
-  return text:find("Diga apenas: tchau", 1, true) ~= nil
+  return text:find("Say only: bye", 1, true) ~= nil
 end)(), table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), "\n"))
 
 -- 3. Wait for the turn and check the streamed reply is in the panel.
@@ -111,40 +111,45 @@ end)(), table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), 
 local attempts = 0
 while not state.finished and attempts < 3 do
   if not wait(function() return state.finished end, 120000) then
-    io.write("   timeout no turno\n")
+    io.write("   timeout on the turn\n")
     break
   end
   if state.deltas == 0 and attempts < 2 then
     attempts = attempts + 1
-    io.write(string.format("   turno falhou sem texto (tentativa %d), repetindo...\n", attempts))
+    io.write(string.format("   turn failed without text (attempt %d), retrying...\n", attempts))
     local panel_text = table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), "\n")
     for line in panel_text:gmatch("[^\n]+") do
       if line:find("⚠", 1, true) then
-        io.write("     motivo: " .. line .. "\n")
+        io.write("     reason: " .. line .. "\n")
         note_provider_error(line)
       end
     end
     state.finished = false
     state.deltas = 0
-    vim.api.nvim_buf_set_lines(panel.state.input.buf, 0, -1, false, { "Diga apenas: tchau" })
+    vim.api.nvim_buf_set_lines(panel.state.input.buf, 0, -1, false, { "Say only: bye" })
     panel.submit()
   else
     break
   end
 end
 
-report("o turno terminou", state.finished, "timeout")
+report("the turn finished", state.finished, "timeout")
 
 local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), "\n")
-io.write("--- painel ---\n" .. text:sub(1, 700) .. "\n--------------\n")
+io.write("--- panel ---\n" .. text:sub(1, 700) .. "\n--------------\n")
 note_provider_error(text)
 
 if state.deltas == 0 and #provider_errors > 0 then
-  io.write("SKIP - streaming/resposta: o provedor recusou o turno, não é bug do plugin\n")
+  io.write("SKIP - streaming/answer: the provider refused the turn, not a plugin bug\n")
   io.write("       " .. provider_errors[1] .. "\n")
 else
-  report("recebeu deltas de texto", state.deltas > 0, "nenhum session.text.delta")
-  report("a resposta apareceu no painel", text:find("tchau", 1, true) ~= nil, text:sub(1, 300))
+  report("received text deltas", state.deltas > 0, "no session.text.delta")
+  local answered = false
+for line in text:gmatch("[^\n]+") do
+  -- skip the echoed user prompt (it starts with the "❯ " marker)
+  if line:find("bye", 1, true) and not line:find("❯", 1, true) then answered = true end
+end
+report("the answer showed up in the panel", answered, text:sub(1, 300))
 end
 
 local cleaned = false

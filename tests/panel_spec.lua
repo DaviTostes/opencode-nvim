@@ -65,22 +65,22 @@ end)
 
 test("streams assistant text into the panel", function()
   feed("session.text.started")
-  feed("session.text.delta", { delta = "olá " })
-  feed("session.text.delta", { delta = "mundo" })
-  feed("session.text.ended", { text = "olá mundo" })
+  feed("session.text.delta", { delta = "hello " })
+  feed("session.text.delta", { delta = "world" })
+  feed("session.text.ended", { text = "hello world" })
   settle()
   local text = panel_text()
-  assert(text:find("olá mundo", 1, true), text)
+  assert(text:find("hello world", 1, true), text)
 end)
 
 test("repairs dropped deltas using text.ended", function()
   feed("session.text.started")
-  feed("session.text.delta", { delta = "parcial" })
-  feed("session.text.ended", { text = "texto completo do servidor" })
+  feed("session.text.delta", { delta = "partial" })
+  feed("session.text.ended", { text = "full text from the server" })
   settle()
   local text = panel_text()
-  assert(text:find("texto completo do servidor", 1, true), text)
-  assert(not text:find("parcial", 1, true), "bloco antigo não foi substituído:\n" .. text)
+  assert(text:find("full text from the server", 1, true), text)
+  assert(not text:find("partial", 1, true), "old block was not replaced:\n" .. text)
 end)
 
 test("renders tool calls with summary and status", function()
@@ -88,14 +88,14 @@ test("renders tool calls with summary and status", function()
   feed("session.tool.input.ended", { id = "call_1", text = '{"filePath":"/tmp/exemplo.lua"}' })
   feed("session.tool.success", {
     id = "call_1",
-    content = { { type = "text", text = "linha 1\nlinha 2" } },
+    content = { { type = "text", text = "line 1\nline 2" } },
   })
   settle()
   local text = panel_text()
   assert(text:find("read", 1, true), text)
   assert(text:find("/tmp/exemplo.lua", 1, true), text)
   assert(text:find("✓", 1, true), text)
-  assert(text:find("linha 1", 1, true), text)
+  assert(text:find("line 1", 1, true), text)
 end)
 
 test("renders a failed tool", function()
@@ -110,9 +110,9 @@ end)
 
 test("ignores events from other sessions", function()
   local before = panel_text()
-  feed("session.text.delta", { delta = "NÃO DEVE APARECER", sessionID = "ses_outra" })
+  feed("session.text.delta", { delta = "MUST NOT APPEAR", sessionID = "ses_other" })
   settle()
-  assert(panel_text() == before, "evento de outra sessão vazou para o painel")
+  assert(panel_text() == before, "event from another session leaked into the panel")
 end)
 
 test("ignores catalog events", function()
@@ -120,23 +120,23 @@ test("ignores catalog events", function()
   event.emit({ type = "plugin.updated", data = { id = "x" } })
   event.emit({ type = "catalog.updated", data = {} })
   settle()
-  assert(panel_text() == before, "evento de catálogo mexeu no painel")
+  assert(panel_text() == before, "catalog event touched the panel")
 end)
 
 test("renders reasoning and errors", function()
-  feed("session.reasoning.delta", { delta = "pensando..." })
+  feed("session.reasoning.delta", { delta = "thinking..." })
   feed("session.reasoning.ended", {})
   feed("session.error", { message = "algo falhou" })
   settle()
   local text = panel_text()
-  assert(text:find("pensando", 1, true), text)
+  assert(text:find("thinking", 1, true), text)
   assert(text:find("algo falhou", 1, true), text)
 end)
 
 test("clears the panel", function()
   plugin.clear()
   settle()
-  assert(panel_text() == "", "painel não foi limpo")
+  assert(panel_text() == "", "panel was not cleared")
 end)
 
 test("renders history messages", function()
@@ -183,32 +183,32 @@ test("review popup offers revert", function()
   })
   settle(80)
   local text = table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false), "\n")
-  assert(text:find("desfazer", 1, true), text)
+  assert(text:find("undo the turn", 1, true), text)
   vim.api.nvim_feedkeys("r", "x", false)
   settle(80)
-  assert(reverted, "a tecla r não chamou on_revert")
+  assert(reverted, "the r key did not call on_revert")
 end)
 
 test("opens the panel window and the prompt", function()
   local ok, err = pcall(plugin.open)
   if not ok then return report("opens the panel window and the prompt", false, err) end
-  assert(panel.visible(), "janela do painel não abriu")
-  assert(panel.state.input.win ~= nil, "janela do prompt não abriu")
-  assert(vim.api.nvim_get_current_win() == panel.state.input.win, "o prompt não recebeu o foco")
-  -- Obs: com `-l` (sem UI) o Neovim não entra em insert mode, então o modo não
-  -- pode ser verificado aqui.
+  assert(panel.visible(), "panel window did not open")
+  assert(panel.state.input.win ~= nil, "prompt window did not open")
+  assert(vim.api.nvim_get_current_win() == panel.state.input.win, "the prompt did not get focus")
+  -- Note: with `-l` (no UI) Neovim does not enter insert mode, so the mode
+  -- cannot be checked here.
   plugin.close()
   settle(60)
-  assert(not panel.visible(), "janela do painel não fechou")
+  assert(not panel.visible(), "panel window did not close")
 end)
 
-test("mostra 'pensando…' e troca pelo conteúdo", function()
+test("shows 'thinking…' and swaps it for content", function()
   plugin.clear()
   settle()
   feed("session.execution.started")
   settle()
   local text = panel_text()
-  assert(text:find("pensando", 1, true), "placeholder ausente:\n" .. text)
+  assert(text:find("thinking", 1, true), "placeholder missing:\n" .. text)
 
   feed("session.text.started")
   feed("session.text.delta", { delta = "pronto" })
@@ -216,10 +216,10 @@ test("mostra 'pensando…' e troca pelo conteúdo", function()
   settle()
   text = panel_text()
   assert(text:find("pronto", 1, true), text)
-  assert(not text:find("pensando", 1, true), "placeholder não foi removido:\n" .. text)
+  assert(not text:find("thinking", 1, true), "placeholder was not removed:\n" .. text)
 end)
 
-test("resolve_model cai para o modelo preferido do TUI", function()
+test("resolve_model falls back to the TUI preferred model", function()
   local session = require("opencode-nvim.session")
   local model = session.resolve_model(nil, {})
   local preferred = session.preferred_model()
@@ -227,50 +227,53 @@ test("resolve_model cai para o modelo preferido do TUI", function()
     assert(model and model.providerID == preferred.providerID and model.id == preferred.id,
       vim.inspect(model))
   else
-    assert(model == nil, "sem preferido não deveria inventar modelo")
+    assert(model == nil, "without a preferred model it must not invent one")
   end
 
-  -- Modelo explícito desconhecido é descartado com motivo.
+  -- An unknown explicit model is dropped with a reason.
   local dropped, reason = session.resolve_model({ providerID = "x", id = "y" },
     { { providerID = "a", id = "b" } })
   assert(dropped == nil and reason ~= nil, vim.inspect({ dropped, reason }))
 
-  -- E um conhecido é normalizado pelo catálogo.
+  -- A known one is normalized through the catalogue.
   local known = session.resolve_model({ providerID = "a", id = "b" },
     { { providerID = "a", id = "b", variant = "v" } })
   assert(known and known.id == "b" and known.variant == "v", vim.inspect(known))
 end)
 
-test("prompt e painel ficam alinhados e sem sobreposição", function()
+test("prompt and panel are aligned and do not overlap", function()
   plugin.open()
   local pwin, iwin = panel.state.win, panel.state.input.win
   assert(pwin and iwin, "janelas ausentes")
   local panel_conf = vim.api.nvim_win_get_config(pwin)
   local input_conf = vim.api.nvim_win_get_config(iwin)
 
-  -- Both content areas must share the same left edge.
-  local panel_left = panel_conf.col - panel_conf.width + 1
-  assert(input_conf.col == panel_left,
-    string.format("bordas esquerdas diferentes: painel=%d prompt=%d", panel_left, input_conf.col))
+  -- Same anchor, column and width: alignment guaranteed by construction
+  -- (the C side computes the border the same way for both).
+  assert(panel_conf.anchor == "SE" and input_conf.anchor == "SE",
+    string.format("different anchors: panel=%s prompt=%s", tostring(panel_conf.anchor), tostring(input_conf.anchor)))
+  assert(panel_conf.col == input_conf.col,
+    string.format("different columns: panel=%s prompt=%s", tostring(panel_conf.col), tostring(input_conf.col)))
+  assert(panel_conf.width == input_conf.width,
+    string.format("different widths: panel=%s prompt=%s", tostring(panel_conf.width), tostring(input_conf.width)))
 
-  -- The prompt sits below the panel (anchors: SE for the panel, SW for the
-  -- prompt), with the borders not touching.
+  -- The panel ends above the prompt under either border convention.
   local panel_outer_bottom = panel_conf.row + 1
-  local input_outer_top = input_conf.row - 1
-  assert(input_outer_top > panel_outer_bottom,
-    string.format("prompt sobrepõe o painel: prompt_top=%d painel_bottom=%d", input_outer_top, panel_outer_bottom))
+  local input_outer_top = input_conf.row - input_conf.height - 2
+  assert(panel_outer_bottom < input_outer_top,
+    string.format("prompt overlaps the panel: panel_bottom=%d prompt_top=%d", panel_outer_bottom, input_outer_top))
   plugin.close()
 end)
 
 test("submitting goes back to the code window", function()
   local target = panel.code_target()
-  assert(target and target.win, "não achei uma janela de código")
+  assert(target and target.win, "no code window found")
   panel.open()
   assert(panel.state.input.win ~= nil)
   panel.close_input()
   panel.state.input.target = target
   panel.after_submit()
-  assert(vim.api.nvim_get_current_win() == target.win, "o foco não voltou para o código")
+  assert(vim.api.nvim_get_current_win() == target.win, "focus did not return to the code")
   plugin.close()
 end)
 

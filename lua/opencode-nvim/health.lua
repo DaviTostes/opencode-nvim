@@ -5,39 +5,39 @@ function M.check()
 
   local ok, discovery = pcall(require, "opencode-nvim.discovery")
   if not ok then
-    vim.health.error("não consegui carregar o módulo de descoberta")
+    vim.health.error("could not load the discovery module")
     return
   end
 
   local info = discovery.describe()
 
   if info.service_exists then
-    vim.health.ok("registro do serviço encontrado: " .. info.service_file)
+    vim.health.ok("service registration found: " .. info.service_file)
   else
-    vim.health.warn("nenhum registro de serviço em " .. info.service_file .. " (o plugin pode subir um)")
+    vim.health.warn("no service registration in " .. info.service_file .. " (the plugin can start one)")
   end
 
   if info.service_exists and not info.pid_alive then
-    vim.health.warn("o pid registrado (" .. tostring(info.service_pid) .. ") não está vivo; um novo serviço será iniciado")
+    vim.health.warn("the registered pid (" .. tostring(info.service_pid) .. ") is not alive; a new service will be started")
   end
 
   if vim.fn.executable(info.command or "opencode2") == 1 then
     vim.health.ok("comando encontrado: " .. tostring(info.command))
   else
-    vim.health.error("'" .. tostring(info.command) .. "' não está no PATH (ajuste server.command)")
+    vim.health.error("'" .. tostring(info.command) .. "' is not in PATH (adjust server.command)")
   end
 
   local server = discovery.current()
   if server then
-    vim.health.ok("servidor resolvido: " .. tostring(server.url))
+    vim.health.ok("server resolved: " .. tostring(server.url))
   else
-    vim.health.info("servidor ainda não resolvido — use :OpencodeHealth para uma checagem ao vivo")
+    vim.health.info("server not resolved yet — use :OpencodeHealth for a live check")
   end
 
   if vim.o.autoread then
     vim.health.ok("'autoread' ligado (buffers recarregam sozinhos)")
   else
-    vim.health.warn("'autoread' desligado — edições da IA não vão recarregar os buffers automaticamente")
+    vim.health.warn("'autoread' is off — AI edits will not reload buffers automatically")
   end
 
   local ok_event, event = pcall(require, "opencode-nvim.event")
@@ -49,9 +49,9 @@ function M.check()
   if ok_session then
     local current = session.info()
     if current then
-      vim.health.ok("sessão atual: " .. current.id)
+      vim.health.ok("current session: " .. current.id)
     else
-      vim.health.info("nenhuma sessão ativa")
+      vim.health.info("no active session")
     end
   end
 
@@ -59,13 +59,13 @@ function M.check()
   if ok_cfg then
     local ruleset = cfg.permission_ruleset()
     if ruleset == nil then
-      vim.health.warn("permissions = false: nenhuma aprovação no editor")
+      vim.health.warn("permissions = false: no in-editor approval")
     else
       local asks = {}
       for _, rule in ipairs(ruleset) do
         if rule.effect == "ask" then asks[#asks + 1] = rule.action end
       end
-      vim.health.ok("aprovação no editor para: " .. (#asks > 0 and table.concat(asks, ", ") or "nenhuma ação"))
+      vim.health.ok("in-editor approval for: " .. (#asks > 0 and table.concat(asks, ", ") or "no actions"))
     end
   end
 end

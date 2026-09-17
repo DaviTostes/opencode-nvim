@@ -201,7 +201,7 @@ function R:note(text, kind)
 end
 
 function R:error(text)
-  self:block("error", "⚠ " .. (text or "erro"))
+  self:block("error", "⚠ " .. (text or "error"))
 end
 
 function R:clear()

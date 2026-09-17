@@ -156,12 +156,12 @@ end
 ---@param err any
 ---@return string
 function M.err_text(err)
-  if err == nil then return "erro desconhecido" end
+  if err == nil then return "unknown error" end
   if type(err) == "string" then return err end
   if type(err) == "table" then
     if err.message then return string.format("%s (code=%s)", tostring(err.message), tostring(err.code)) end
     local ok, encoded = pcall(vim.inspect, err)
-    return ok and encoded or "erro"
+    return ok and encoded or "error"
   end
   return tostring(err)
 end

@@ -44,7 +44,7 @@ function M.server_from_service(service)
   if not service then return nil end
   local host, port, err = http.url_parts(service.url)
   if not host then
-    log.debug("service.url inválida:", err)
+    log.debug("invalid service.url:", err)
     return nil
   end
   return {
@@ -83,7 +83,7 @@ function M.probe(server, cb, timeout)
       if err then return cb(err) end
       if status ~= 200 then return cb("health respondeu " .. tostring(status)) end
       local info = require("opencode-nvim.util").decode(text)
-      if type(info) ~= "table" then return cb("health devolveu json inválido") end
+      if type(info) ~= "table" then return cb("health returned invalid json") end
       cb(nil, info)
     end)
 end
@@ -105,9 +105,9 @@ end
 local function autostart(cb)
   local command = options().command or "opencode2"
   if vim.fn.executable(command) ~= 1 then
-    return cb(string.format("'%s' não encontrado no PATH (ajuste server.command)", command))
+    return cb(string.format("'%s' not found in PATH (adjust server.command)", command))
   end
-  log.debug("subindo/validando o serviço via", command)
+  log.debug("starting/validating the service via", command)
   vim.system({ command, "api", "get", "/api/health" }, { text = true, timeout = 60000 }, function()
     -- The service writes its address to service.json while starting.
     local deadline = (vim.uv or vim.loop).now() + 15000
@@ -116,7 +116,7 @@ local function autostart(cb)
       if server then
         M.probe(server, function(err)
           if not err then
-            log.debug("serviço pronto em", server.url)
+            log.debug("service ready at", server.url)
             return adopt(server)
           end
           retry()
@@ -127,7 +127,7 @@ local function autostart(cb)
     end
     local function retry()
       if (vim.uv or vim.loop).now() > deadline then
-        return cb("não foi possível subir o serviço do OpenCode")
+        return cb("could not start the OpenCode service")
       end
       vim.defer_fn(attempt, 250)
     end
@@ -161,7 +161,7 @@ function M.resolve(cb)
     if not host then return done(err) end
     local server = { host = host, port = port, password = options().password, url = configured_url }
     return M.probe(server, function(probe_err)
-      if probe_err then return done("server.url configurada não respondeu: " .. probe_err) end
+      if probe_err then return done("configured server.url did not respond: " .. probe_err) end
       done(nil, server)
     end)
   end
@@ -170,7 +170,7 @@ function M.resolve(cb)
   local server = M.server_from_service(service)
   if server then
     if not alive(service.pid) then
-      log.debug("service.json aponta para um pid morto", service.pid)
+      log.debug("service.json points to a dead pid", service.pid)
       server = nil
     end
   end
@@ -178,14 +178,14 @@ function M.resolve(cb)
   if server then
     return M.probe(server, function(probe_err)
       if not probe_err then return done(nil, server) end
-      log.debug("health falhou:", probe_err)
+      log.debug("health failed:", probe_err)
       if options().autostart == false then return done(probe_err) end
       autostart(done)
     end)
   end
 
   if options().autostart == false then
-    return done("nenhum serviço do OpenCode encontrado e autostart = false")
+    return done("no OpenCode service found and autostart = false")
   end
   autostart(done)
 end

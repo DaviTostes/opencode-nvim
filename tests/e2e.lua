@@ -3,8 +3,8 @@
 -- Creates a throwaway session in a temp directory, sends one tiny prompt and
 -- records every event the server emits (including the exact payload shapes).
 --
---   make e2e                     -- só o streaming de texto
---   E2E_TOOLS=1 make e2e         -- também valida a aprovação de edição
+--   make e2e                     -- text streaming only
+--   E2E_TOOLS=1 make e2e         -- also validates edit approval
 --
 -- Cost: one short prompt (plus one tool prompt with E2E_TOOLS=1).
 local uv = vim.uv or vim.loop
@@ -22,7 +22,7 @@ local workdir = os.getenv("E2E_DIR") or vim.fs.joinpath(vim.fn.tempname())
 local with_tools = os.getenv("E2E_TOOLS") == "1"
 vim.fn.mkdir(workdir, "p")
 
-io.write("diretório: " .. workdir .. "\n")
+io.write("directory: " .. workdir .. "\n")
 io.write("dump: " .. dump_path .. "\n\n")
 
 local seen, samples, deltas = {}, {}, {}
@@ -76,7 +76,7 @@ local function step(name, fn, timeout)
   end
   if err then
     local text = type(err) == "table" and (err.message or vim.inspect(err)) or tostring(err)
-    io.write("   ERRO: " .. text .. "\n")
+    io.write("   ERROR: " .. text .. "\n")
     return nil
   end
   return true
@@ -90,9 +90,9 @@ local function send_prompt(session_id, text)
     end)
   end)
   if not ok then return false end
-  io.write("   aguardando o fim do turno...\n")
+  io.write("   waiting for the turn to finish...\n")
   if not wait(function() return state.finished end, 120000) then
-    io.write("   TIMEOUT esperando o fim do turno\n")
+    io.write("   TIMEOUT waiting for the turn to finish\n")
     return false
   end
   return true
@@ -115,7 +115,7 @@ local function last_assistant_text(session_id, cb)
 end
 
 local function describe_session(session_id, label)
-  step(label .. ": inspecionar sessão", function(cb)
+  step(label .. ": inspect session", function(cb)
     api.get_session(session_id, function(err, info)
       if err then return cb(err) end
       io.write("   agent=" .. tostring(info.agent) .. " model=" .. vim.inspect(info.model) .. "\n")
@@ -132,7 +132,7 @@ local ok = step("descoberta + health", function(cb)
     if err then return cb(err) end
     discovery.probe(server, function(probe_err, info)
       if probe_err then return cb(probe_err) end
-      io.write(string.format("   servidor %s versão %s pid %s\n", server.url, tostring(info.version), tostring(info.pid)))
+      io.write(string.format("   server %s version %s pid %s\n", server.url, tostring(info.version), tostring(info.pid)))
       cb(nil)
     end)
   end)
@@ -140,13 +140,13 @@ end)
 if not ok then os.exit(1) end
 
 if not wait(function() return require("opencode-nvim.sse").connected() end, 10000) then
-  io.write("não consegui conectar no stream de eventos\n")
+  io.write("could not connect to the event stream\n")
   os.exit(1)
 end
 io.write("   stream conectado\n")
 
 -- Session 1: text streaming with a read-only agent.
-step("criar sessão de texto (agent=plan)", function(cb)
+step("create text session (agent=plan)", function(cb)
   api.create_session({
     location = { directory = workdir },
     agent = "plan",
@@ -165,12 +165,12 @@ step("criar sessão de texto (agent=plan)", function(cb)
   end)
 end)
 
-describe_session(text_session, "sessão de texto")
+describe_session(text_session, "text session")
 
 deltas = {}
-send_prompt(text_session, "Responda apenas com a palavra: ok. Não use ferramentas.")
+send_prompt(text_session, "Answer with the single word: ok. Do not use tools.")
 io.write(string.format("\n   text deltas: %d, total %d bytes\n", #deltas, #table.concat(deltas)))
-step("resposta final", function(cb)
+step("final answer", function(cb)
   last_assistant_text(text_session, function(err, text)
     if err then return cb(err) end
     io.write("   " .. vim.inspect((text or ""):sub(1, 200)) .. "\n")
@@ -186,7 +186,7 @@ if with_tools then
     asked = ev.data
   end)
 
-  step("criar sessão de ferramentas (agent=build)", function(cb)
+  step("create tools session (agent=build)", function(cb)
     api.create_session({
       location = { directory = workdir },
       agent = "build",
@@ -205,12 +205,12 @@ if with_tools then
     end)
   end)
 
-  describe_session(tool_session, "sessão de ferramentas")
+  describe_session(tool_session, "tools session")
 
   state.finished = false
-  step("pedir criação de arquivo", function(cb)
+  step("ask for file creation", function(cb)
     api.prompt(tool_session, {
-      text = "Crie um arquivo chamado e2e-hello.txt contendo exatamente: oi",
+      text = "Create a file named e2e-hello.txt containing exactly: oi",
     }, function(err) cb(err) end)
   end)
 
@@ -222,22 +222,22 @@ if with_tools then
       api.reply_permission(tool_session, request.id, "once", nil, function(err) cb(err) end)
     end)
     if wait(function() return state.finished end, 120000) then
-      io.write("   turno concluído\n")
+      io.write("   turn finished\n")
     else
-      io.write("   TIMEOUT esperando o fim do turno depois da aprovação\n")
+      io.write("   TIMEOUT waiting for the turn to finish after approval\n")
     end
     local file = vim.fs.joinpath(workdir, "e2e-hello.txt")
-    io.write("   arquivo criado: " .. tostring(vim.fn.filereadable(file) == 1) .. "\n")
+    io.write("   file created: " .. tostring(vim.fn.filereadable(file) == 1) .. "\n")
     if vim.fn.filereadable(file) == 1 then
-      io.write("   conteúdo: " .. vim.inspect(vim.fn.readfile(file)) .. "\n")
+      io.write("   content: " .. vim.inspect(vim.fn.readfile(file)) .. "\n")
     end
   else
-    io.write("   nenhuma permissão pedida (o agente pode ter recusado ou editado sem pedir)\n")
+    io.write("   no permission was asked (the agent may have refused or edited without asking)\n")
   end
 
   stop()
 
-  step("limpar sessão de ferramentas", function(cb)
+  step("clean up tools session", function(cb)
     api.delete_session(tool_session, function() cb(nil) end)
   end)
 end
@@ -281,7 +281,7 @@ if fd then
   io.write("\ndump: " .. dump_path .. "\n")
 end
 
-step("limpar sessão de texto", function(cb)
+step("clean up text session", function(cb)
   api.delete_session(text_session, function() cb(nil) end)
 end)
 
