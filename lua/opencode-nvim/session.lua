@@ -428,7 +428,9 @@ function M.revert_last_turn(cb)
 end
 
 function M.start_stream()
-  sse.start()
+  -- `event.start` attaches the bus to the stream; a bare `sse.start` would
+  -- connect and drop every event.
+  event.start()
 end
 
 --- Send a prompt to the current session, creating one when needed.

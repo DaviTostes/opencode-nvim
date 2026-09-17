@@ -22,6 +22,13 @@ function M.status()
   return state.status
 end
 
+--- True when somebody is listening to the stream. A stream without a handler
+--- parses events into the void, which is exactly how "nothing ever happens"
+--- looked.
+function M.has_handler()
+  return state.on_event ~= nil
+end
+
 --- True once the stream was started at least once (used to avoid showing
 --- "offline" before the first request).
 function M.started()
@@ -111,6 +118,11 @@ function M.start(opts)
   opts = opts or {}
   if state.on_event then opts.on_event = opts.on_event or state.on_event end
   state.on_event = opts.on_event
+
+  -- Already live: just (re)attach the handler instead of reconnecting.
+  if state.handle and (state.status == "connected" or state.status == "connecting") then
+    return
+  end
 
   state.generation = state.generation + 1
   local generation = state.generation

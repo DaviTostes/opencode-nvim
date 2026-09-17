@@ -89,7 +89,6 @@ event.on_any(function(ev)
 end)
 
 plugin.setup({ keymaps = { enabled = false }, agent = AGENT })
-event.start()
 
 -- Instrument the reply so any failure is visible (and the raw status/body).
 local api = require("opencode-nvim.api")

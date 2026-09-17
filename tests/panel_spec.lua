@@ -57,6 +57,9 @@ test("setup defines highlights and commands", function()
   assert(vim.fn.exists(":Opencode") == 2, "comando :Opencode ausente")
   assert(vim.fn.exists(":OpencodeApprovalAgent") == 2)
   assert(vim.fn.exists(":OpencodeDoctor") == 2, "the :OpencodeDoctor command is missing")
+  -- Regression: setup() must attach the event bus to the stream, otherwise the
+  -- stream parses events into the void and nothing ever renders.
+  assert(require("opencode-nvim.sse").has_handler(), "the event bus is not attached to the SSE stream")
 end)
 
 test("config exposes the approval agent name", function()

@@ -53,6 +53,10 @@ function M.wire()
     reload.on_event(ev)
     session.on_event(ev)
   end)
+
+  -- Attach the bus to the SSE stream. This is what turns the stream into
+  -- rendered text, tool lines, permission popups and buffer reloads.
+  event.start()
 end
 
 --------------------------------------------------------------------------------
@@ -536,7 +540,8 @@ function M.doctor()
 
   job(function(cb)
     local sse = require("opencode-nvim.sse")
-    cb(string.format("event stream: %s  connected=%s", sse.status(), tostring(sse.connected())))
+    cb(string.format("event stream: %s  connected=%s  handler=%s", sse.status(),
+      tostring(sse.connected()), tostring(sse.has_handler())))
   end)
 
   job(function(cb)

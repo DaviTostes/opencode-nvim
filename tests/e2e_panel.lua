@@ -47,7 +47,6 @@ local function note_provider_error(text)
 end
 
 plugin.setup({ keymaps = { enabled = true }, agent = "plan" })
-event.start()
 
 local state = { finished = false, deltas = 0 }
 event.on_any(function(ev)
