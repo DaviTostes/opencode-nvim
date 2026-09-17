@@ -293,7 +293,12 @@ local function panel_config()
   local width, height = panel_geometry()
   state.geom = { width, height }
   local lift = 0
-  if input_open() then lift = M.input_height() + 4 end
+  if input_open() then
+    -- The prompt is `input_height` rows plus its two border rows; +2 puts the
+    -- panel's bottom border right above the prompt's top border, with no hole in
+    -- between.
+    lift = M.input_height() + 2
+  end
   return {
     relative = "editor",
     anchor = "SE",

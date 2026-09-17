@@ -599,11 +599,20 @@ test("prompt and panel are aligned and do not overlap", function()
   assert(panel_conf.width == input_conf.width,
     string.format("different widths: panel=%s prompt=%s", tostring(panel_conf.width), tostring(input_conf.width)))
 
-  -- The panel ends above the prompt under either border convention.
-  local panel_outer_bottom = panel_conf.row + 1
-  local input_outer_top = input_conf.row - input_conf.height - 2
-  assert(panel_outer_bottom < input_outer_top,
-    string.format("prompt overlaps the panel: panel_bottom=%d prompt_top=%d", panel_outer_bottom, input_outer_top))
+  -- Stacked tightly: the panel ends one border row above the prompt, with no
+  -- hole in between (the two are `input.height + 2` rows apart).
+  assert(input_conf.row - panel_conf.row == input_conf.height + 2,
+    string.format("unexpected gap: panel_row=%d prompt_row=%d prompt_height=%s",
+      panel_conf.row, input_conf.row, tostring(input_conf.height)))
+
+  -- And they cannot overlap: the panel's content ends above the prompt's content
+  -- under either anchor convention (with a border, Neovim may place the content
+  -- one row higher, which only increases the distance).
+  local panel_content_bottom = panel_conf.row
+  local input_content_top = input_conf.row - input_conf.height + 1
+  assert(panel_content_bottom < input_content_top,
+    string.format("prompt overlaps the panel: panel_bottom=%d prompt_top=%d",
+      panel_content_bottom, input_content_top))
   plugin.close()
 end)
 
