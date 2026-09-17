@@ -221,10 +221,28 @@ local function ensure_reasoning_header(renderer)
   end
 end
 
+--- Writes the accumulated reasoning of one part into the panel.
+---
+--- Inline (header + gutter) and only when the part is complete, so it never
+--- interleaves with tool output and never flickers word by word.
+local function flush_reasoning(renderer)
+  local text = state.reasoning_text
+  state.reasoning_text = nil
+  if not text or text == "" then return end
+  ensure_reasoning_header(renderer)
+  renderer:finalize()
+  renderer:stream("dim", text, GUTTER)
+  renderer:finalize()
+  state.reasoning_open = false
+  fold_reasoning(renderer)
+end
+
 --- Tool headers are deferred until their arguments are complete, so the
 --- reasoning around a tool call stays in a single block (and the header gets
 --- the useful summary on the first render).
 local function flush_tool(renderer, id, name, args)
+  -- keep the order: reasoning written before the tool it surrounds
+  flush_reasoning(renderer)
   local pending = state.pending_tools[id]
   state.pending_tools[id] = nil
   name = name or (pending and pending.name)
@@ -916,7 +934,9 @@ function M.clear()
   -- swallow the next turn's placeholder and a stale tool would never render.
   state.input.index = 0
   state.input.draft = ""
+  state.reasoning_text = nil
   state.thinking = false
+  state.reasoning_text = nil
   state.reasoning_open = false
   state.pending_tools = {}
   state.stall_text = nil
@@ -1156,6 +1176,7 @@ function M.on_event(ev)
   local renderer = M.renderer()
 
   if kind == "session.text.started" then
+    flush_reasoning(renderer)
     flush_all_tools(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)
@@ -1170,13 +1191,15 @@ function M.on_event(ev)
     renderer:text_finished(util.pick_string(data, { "text" }))
   elseif kind == "session.reasoning.started" then
     clear_stall(renderer)
+    state.reasoning_text = ""
     renderer:finalize()
   elseif kind == "session.reasoning.delta" then
-    ensure_reasoning_header(renderer)
-    renderer:stream("dim", event_text(data) or "", GUTTER)
+    -- Accumulated, not streamed: rendering every delta split the reasoning into
+    -- fragments around tool calls (the tail of a fragment even looked like a
+    -- header). It is written once, inline, when the part ends.
+    state.reasoning_text = (state.reasoning_text or "") .. (event_text(data) or "")
   elseif kind == "session.reasoning.ended" then
-    renderer:finalize()
-    fold_reasoning(renderer)
+    flush_reasoning(renderer)
   elseif kind == "session.tool.input.started" then
     -- Deferred: rendering now would split the reasoning around the call.
     clear_stall(renderer)
@@ -1205,6 +1228,7 @@ function M.on_event(ev)
       renderer:note(THINKING_LINE, "meta")
     end
   elseif kind == "session.execution.succeeded" or kind == "session.execution.interrupted" then
+    flush_reasoning(renderer)
     flush_all_tools(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)
@@ -1215,6 +1239,7 @@ function M.on_event(ev)
     M.update_title()
     vim.defer_fn(M.review_turn, 150)
   elseif kind == "session.execution.failed" then
+    flush_reasoning(renderer)
     flush_all_tools(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)

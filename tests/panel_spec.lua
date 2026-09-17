@@ -351,6 +351,35 @@ test("actions are one pick away", function()
   assert(labels["review my changes"] and labels["write tests"], vim.inspect(labels))
 end)
 
+test("reasoning is only written when the part finishes", function()
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "half a thought" })
+  settle()
+  local text = panel_text()
+  assert(not text:find("half a thought", 1, true),
+    "the reasoning streamed before the part finished:\n" .. text)
+  assert(text:find("thinking", 1, true), "the placeholder should be there:\n" .. text)
+
+  feed("session.reasoning.delta", { delta = " and the rest" })
+  feed("session.reasoning.ended")
+  settle()
+  text = panel_text()
+  assert(text:find("│ half a thought and the rest", 1, true),
+    "the finished reasoning was not written inline:\n" .. text)
+
+  -- and a second part is a block of its own
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "second thought" })
+  feed("session.reasoning.ended")
+  settle()
+  text = panel_text()
+  assert(text:find("│ second thought", 1, true), text)
+  plugin.close()
+end)
+
 test("reasoning gets a header, a gutter and a fold", function()
   plugin.open({ input = false }) -- folds need a window
   plugin.clear()

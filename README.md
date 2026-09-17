@@ -62,7 +62,8 @@ before `setup()`.
   `:OpencodeDoctor` prints the server, stream, session, last events and error.
 - **Models.** Uses your last TUI model; pin it with
   `model = { providerID = "...", id = "..." }` or pick with `:OpencodeModels`.
-  Reasoning folds under `▸ thinking` (`zo`/`zR`).
+  Reasoning is written when the part finishes (no flicker, no fragments) and
+  folds under `▸ thinking` (`zo`/`zR`).
 - **Keys.** Panel: `i`/`a`/`<CR>` prompt · `q`/`<Esc>` close · `<C-c>` interrupt ·
   `gd` diff · `r` resend · `G` end (scroll up to stop following). Popups:
   `<CR>`/`y` allow once · `A` always · `x` reject · `<Esc>`/`q` later.

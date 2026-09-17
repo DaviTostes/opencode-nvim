@@ -2,7 +2,7 @@ NVIM ?= nvim
 
 .PHONY: test e2e lint tags
 
-test:
+test: lint
 	$(NVIM) -l tests/discovery_spec.lua
 	$(NVIM) -l tests/http_spec.lua
 	$(NVIM) -l tests/sse_spec.lua
@@ -18,6 +18,9 @@ e2e-approval:
 probe:
 	$(NVIM) -l tests/probe_permissions.lua
 
+lint:
+	$(NVIM) -l tests/lint.lua
+
 ui-smoke:
 	tests/ui_smoke.sh
 
@@ -29,9 +32,6 @@ probe-hang:
 
 e2e-panel:
 	$(NVIM) -l tests/e2e_panel.lua
-
-lint:
-	$(NVIM) --headless -c "lua vim.tbl_map(function(f) local c, e = loadfile(f); if not c then print('SYNTAX '..f..': '..tostring(e)) end end, vim.fn.glob('lua/**/*.lua', false, true))" -c "qa!"
 
 tags:
 	$(NVIM) --headless -c "helptags doc" -c "qa!"
