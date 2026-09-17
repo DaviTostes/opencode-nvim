@@ -27,17 +27,22 @@ Local development: `vim.opt.rtp:prepend("/home/toast/opencode-nvim")`.
 ## Quick start
 
 ```
-:Opencode          show/hide the panel (no prompt, no focus change)
+:Opencode          show/hide the panel and focus it
 :OpencodeAsk       open the prompt and type
 <CR>               send
 <Esc>              leave
 ```
 
-`:Opencode` never moves your cursor: it only shows the panel. The prompt is
-opened on purpose by `:OpencodeAsk`, `:OpencodeEdit`, `:OpencodeActions` or the
-`i` key inside the panel, and it always starts empty (`i` keeps the draft you
-were typing). After sending you stay in your code, and `<C-Up>`/`<C-Down>`
-walks the history of prompts.
+Opening the panel **takes the cursor**, so its keys (`gd` diff, `r` resend,
+`zo` unfold, `q` close) work right away — `ui.focus_on_open = false` keeps your
+cursor in the code instead. Nothing *automatic* ever moves it: while an answer
+streams, the review notification and the panel updates all happen without
+touching your focus, and after sending you stay where `ui.focus_after_submit`
+points (`code` by default).
+
+The prompt is opened on purpose by `:OpencodeAsk`, `:OpencodeEdit`,
+`:OpencodeActions` or the `i` key inside the panel, and it always starts empty
+(`i` keeps the draft you were typing). `<C-Up>`/`<C-Down>` walks the history.
 
 That is the whole loop. No keymaps are installed by default; if you want them,
 list exactly the ones you want (mapping happens when `setup()` runs, so
@@ -61,7 +66,7 @@ require("opencode-nvim").setup({
 
 | Command | What it does |
 | --- | --- |
-| `:Opencode` | show/hide the panel (does not touch your cursor) |
+| `:Opencode` | show/hide the panel (focuses it) |
 | `:OpencodeClose` | close the panel |
 | `:OpencodeAsk [text]` | ask; with a range it sends the selection |
 | `:OpencodeEdit` | ask for a change in the selection (or file) |
@@ -104,10 +109,11 @@ require("opencode-nvim").setup({
   the diff when you want it; `u` inside that popup undoes the whole turn (files
   restored), `<CR>` keeps it. Prefer the old always-popup behaviour?
   `approval = { review = "popup" }`.
-- **Focus stays where you are.** `:Opencode`/`:OpencodeSessions`/`:OpencodeNew`
-  show the panel without moving your cursor; after sending you stay in your code
-  (`ui.focus_after_submit = "code"`). The only thing that takes focus is a
-  permission request, because the turn is paused waiting for your decision.
+- **You control the focus.** Opening the panel (`:Opencode`, `:OpencodeSessions`,
+  `:OpencodeNew`) puts the cursor in it — you asked for it. Sending leaves you in
+  your code (`ui.focus_after_submit = "code"`), streaming never pulls you in, and
+  the only automatic thing that takes focus is a permission request, because the
+  turn is paused waiting for your decision.
 - **A turn that never answers.** The panel counts the elapsed time and warns at
   30s showing the last event of that session. `<C-c>` interrupts, `r` in the
   panel (or `:OpencodeResend`) sends again, and `:OpencodeDoctor` prints the
@@ -158,6 +164,7 @@ require("opencode-nvim").setup({
   context = { auto = true },              -- prepend the editor context
   ui = {
     panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22 },
+    focus_on_open = true,                 -- opening the panel focuses it
     focus_after_submit = "code",          -- "code" | "panel" | "input"
     escape_closes = "all",                -- <Esc> closes prompt + panel
   },

@@ -391,11 +391,21 @@ local function ensure_win()
 end
 
 --- Opens the panel. With `opts.input ~= false`, also opens the prompt.
----@param opts? { prefill?: string, selection?: table, input?: boolean, fresh?: boolean }
+---@param opts? { prefill?: string, selection?: table, input?: boolean, fresh?: boolean, focus?: boolean }
 function M.open(opts)
   opts = opts or {}
   ensure_win()
   M.update_title()
+
+  -- Opening the UI is a deliberate act, so it takes the cursor by default
+  -- (`ui.focus_on_open = false` keeps it where it is). Automatic opens — the
+  -- panel appearing because an answer is streaming — pass focus = false.
+  local focus = opts.focus
+  if focus == nil then
+    focus = (cfg.get().ui or {}).focus_on_open ~= false
+  end
+  if focus then pcall(vim.api.nvim_set_current_win, state.win) end
+
   if opts.input ~= false then
     M.open_input(opts.prefill, opts.selection, opts.fresh ~= false)
   end
@@ -690,7 +700,9 @@ function M.send(text, opts)
 
   M.ensure_buf()
   M.renderer():user(text)
-  M.open({ input = false })
+  -- Streaming: show the panel, never take the cursor (focus_after_submit decides
+  -- where it goes).
+  M.open({ input = false, focus = false })
   M.set_status("running")
   state.thinking = true
   M.renderer():note(THINKING_LINE, "meta")

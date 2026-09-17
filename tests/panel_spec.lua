@@ -618,6 +618,50 @@ test("showing the panel does not force a prompt", function()
   assert(not panel.visible(), "toggling again did not close it")
 end)
 
+test("opening the panel takes the cursor (so its keys work)", function()
+  local cfg = require("opencode-nvim.config")
+  plugin.close()
+
+  vim.cmd("Opencode")
+  settle()
+  assert(panel.visible(), "the panel did not open")
+  assert(vim.api.nvim_get_current_win() == panel.state.win,
+    "opening the panel on purpose did not focus it")
+  plugin.close()
+
+  -- but it can be told not to
+  cfg.get().ui.focus_on_open = false
+  vim.cmd("Opencode")
+  settle()
+  assert(panel.visible(), "the panel did not open")
+  assert(vim.api.nvim_get_current_win() ~= panel.state.win,
+    "focus_on_open = false still stole the cursor")
+  cfg.get().ui.focus_on_open = true
+  plugin.close()
+end)
+
+test("streaming never takes the cursor", function()
+  -- M.send renders and shows the panel without focusing it
+  panel.close()
+  local node = panel.code_target()
+  assert(node and node.win, "no code window")
+  vim.api.nvim_set_current_win(node.win)
+
+  local sent = false
+  local session = require("opencode-nvim.session")
+  local saved_prompt = session.prompt
+  session.prompt = function(_, _, cb) sent = true; if cb then cb(nil) end end -- no network
+  panel.send("hello", {})
+  session.prompt = saved_prompt
+
+  settle()
+  assert(sent, "the prompt was not sent")
+  assert(panel.visible(), "the panel should be visible while streaming")
+  assert(vim.api.nvim_get_current_win() == node.win,
+    "streaming moved the cursor into the panel")
+  plugin.close()
+end)
+
 test("the prompt has a history", function()
   plugin.open()
   local input = panel.state.input

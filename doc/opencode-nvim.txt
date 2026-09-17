@@ -102,6 +102,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
       panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, border = "rounded", folds = true },
       input = { height = 4, border = "rounded" },
       diff = { width = 0.85, height = 0.6, border = "rounded" },
+      focus_on_open = true,          -- opening the panel focuses it
       focus_after_submit = "code",   -- "code" (stay in your code) | "panel" | "input"
       escape_closes = "all",       -- <Esc> in the prompt closes the panel too
     },
@@ -147,8 +148,9 @@ reloads keeping your cursor, and `u` still undoes it.
 5. Commands					*opencode-nvim-commands*
 
 :Opencode					*:Opencode*
-	Show/hide the panel. It never moves the cursor and never opens the
-	prompt: use |:OpencodeAsk| or the `i` key inside the panel to type.
+	Show/hide the panel and focus it, so its keys work right away
+	(`ui.focus_on_open = false` keeps your cursor where it is). It does not
+	open the prompt: use |:OpencodeAsk| or the `i` key inside the panel.
 :OpencodeClose					*:OpencodeClose*
 	Close the panel.
 :OpencodeAsk [text]				*:OpencodeAsk*

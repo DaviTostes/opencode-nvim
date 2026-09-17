@@ -61,6 +61,9 @@ M.defaults = {
     panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, border = "rounded", folds = true },
     input = { height = 4, border = "rounded" },
     diff = { width = 0.85, height = 0.6, border = "rounded" },
+    -- Opening the panel on purpose (a command or the toggle) focuses it, so its
+    -- keys work right away. Automatic opens never move your cursor.
+    focus_on_open = true,
     -- After sending: "code" keeps you in your code while the answer streams,
     -- "input" leaves the cursor in the prompt, "panel" focuses the panel.
     focus_after_submit = "code", -- "code" | "panel" | "input"
