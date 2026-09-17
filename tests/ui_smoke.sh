@@ -39,6 +39,9 @@ sleep 2
 # a real submit: <CR> in the prompt
 tmux send-keys -t "$SESSION" Enter
 sleep 1.5
+# an extra <CR> on the now empty prompt must not close it nor move the focus
+tmux send-keys -t "$SESSION" Enter
+sleep 1
 # the agent asks a question while we are typing: answer it from the dialog
 sleep 3.5
 tmux send-keys -t "$SESSION" '1'
@@ -56,6 +59,11 @@ tail -3 "$LOG" | grep -q 'window=input mode=i' || {
   fail=1
 }
 grep -q 'DONE-QUESTION' "$LOG" || { echo "UI SMOKE: the question flow did not finish"; fail=1; }
+# after both <CR>s the prompt must still be there, focused, inserting
+tail -6 "$LOG" | grep -q 'window=input mode=i' || {
+  echo "UI SMOKE: the prompt closed or lost the focus after an empty <CR>"
+  fail=1
+}
 if [ "$fail" -ne 0 ]; then
   echo "UI SMOKE: FAILED"
   exit 1

@@ -253,7 +253,7 @@ The panel follows the stream even while it is not focused. Scrolling up stops
 the following (so you can read back); `G` returns to the end.
 
 Inside the prompt:
-  <CR>		send
+  <CR>		send (on an empty prompt it does nothing)
   <C-j>		newline
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
   <C-Up>, <C-Down>	history of prompts (normal mode: <C-p>, <C-n>)

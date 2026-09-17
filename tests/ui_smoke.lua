@@ -145,6 +145,13 @@ _G.ui_check = function()
     check("after-submit", "input")
     log(string.format("%s prompt-window-kept %s", input.win == before and "PASS" or "FAIL", tostring(before)))
 
+    -- an empty prompt must swallow <CR> without closing anything
+    vim.api.nvim_buf_set_lines(input.buf, 0, -1, false, { "" })
+    panel.submit()
+    vim.wait(200, function() return false end, 50)
+    check("empty-submit-is-a-no-op", "input")
+    log(string.format("%s prompt-still-open %s", input.win ~= nil and "PASS" or "FAIL", tostring(input.win)))
+
     -- leave something for the real <CR> the shell sends next
     vim.api.nvim_buf_set_lines(input.buf, 0, -1, false, { "real submit" })
   end)

@@ -729,9 +729,11 @@ end
 function M.submit()
   local text = M.input_text()
   if util.is_blank(text) then
-    -- <CR> on an empty prompt is "leave the prompt", exactly like <Esc>: it must
-    -- not drop the focus (and the insert mode) somewhere unspecified.
-    return M.escape()
+    -- <CR> on an empty prompt does nothing: the prompt stays open and focused.
+    -- (It used to behave like <Esc>, which closed the prompt right after you had
+    -- sent something, since sending leaves the prompt empty.) `<Esc>` is the way
+    -- out.
+    return
   end
 
   local target = state.input.target
