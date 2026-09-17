@@ -63,6 +63,22 @@ interrupts, `gd` shows the diff, `r` resends the last prompt (handy when the
 provider hiccups), `G` goes to the end. While a turn runs the panel shows
 `▸ thinking…` and the title counts the elapsed time (`● 12s`).
 
+How the panel reads:
+
+```
+❯ your message
+
+▸ thinking (12 lines, zo opens)      <- reasoning, folded by default
+▸ read /path/to/file ✓               <- tool call and its status
+the answer text                      <- plain text, no gutter
+```
+
+Only reasoning is folded (and only collapsed); `zo` opens one block, `zR` opens
+them all. Reasoning is also guttered (`│ `) so it stays distinguishable when
+expanded, and each new turn is separated by a blank line. After sending, the
+prompt stays open for the next message (`ui.focus_after_submit = "input"`;
+use `"code"` to jump back to your code, `"panel"` to land in the panel).
+
 In the prompt: `<CR>` sends, `<C-j>` newline, `<C-x><C-o>` completes files and
 placeholders, `<Esc>` closes.
 
@@ -159,8 +175,8 @@ require("opencode-nvim").setup({
   reload = { enabled = true, set_autoread = true },
   context = { auto = true, max_bytes = 200 * 1024 },
   ui = {
-    panel = { width = 0.45, height = 0.35, max_width = 110, max_height = 30 },
-    focus_after_submit = "code",         -- go back to the code after sending
+    panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, folds = true },
+    focus_after_submit = "input",        -- "code" | "panel" | "input"
   },
 })
 ```

@@ -96,9 +96,12 @@ panel.submit()
 wait(function() return not panel.state.input.win or panel.state.input.win == nil end, 2000)
 vim.wait(200, function() return false end, 50)
 
+-- Default focus_after_submit is "input": the prompt stays open for the next
+-- message, and the code window is still the one providing context.
 local current = vim.api.nvim_get_current_win()
-report("focus went back to the code after sending", current == code_win,
-  string.format("win atual=%d code_win=%d", current, code_win))
+report("the prompt stays open after sending",
+  panel.state.input.win ~= nil and current == panel.state.input.win,
+  string.format("input_win=%s current=%d", tostring(panel.state.input.win), current))
 
 report("the panel shows the prompt", (function()
   local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), "\n")

@@ -107,11 +107,15 @@ function R:append(kind, lines)
   self.closed = false
 end
 
-function R:delta(kind, text)
+---@param kind string
+---@param text string
+---@param prefix? string applied at the start of every new line (a gutter)
+function R:delta(kind, text, prefix)
   if type(text) ~= "string" or text == "" then return end
+  prefix = prefix or ""
   if self.closed or #self.lines == 0 or self.kinds[#self.lines] ~= kind then
     self.closed = false
-    self:append(kind, { "" })
+    self:append(kind, { prefix })
     self.block_start = #self.lines
     self.block_kind = kind
   end
@@ -119,7 +123,7 @@ function R:delta(kind, text)
   self.lines[#self.lines] = (self.lines[#self.lines] or "") .. parts[1]
   self.kinds[#self.lines] = kind
   for index = 2, #parts do
-    self.lines[#self.lines + 1] = parts[index]
+    self.lines[#self.lines + 1] = prefix .. parts[index]
     self.kinds[#self.lines] = kind
   end
 end
@@ -152,8 +156,8 @@ function R:text_finished(text)
   self:draw()
 end
 
-function R:stream(kind, text)
-  self:delta(kind, text)
+function R:stream(kind, text, prefix)
+  self:delta(kind, text, prefix)
   self._draw()
 end
 
@@ -168,6 +172,22 @@ function R:block(kind, text)
   self:append(kind, util.lines(text or ""))
   self:finalize()
   self:flush()
+end
+
+--- Replaces the first line equal to `old` (turns the "thinking" placeholder
+--- into the block header).
+---@return boolean replaced
+function R:replace_line(old, new)
+  for index = 1, #self.lines do
+    if self.lines[index] == old then
+      self.lines[index] = new
+      self.committed = math.min(self.committed, index - 1)
+      self.drawn = math.min(self.drawn, index - 1)
+      self:draw()
+      return true
+    end
+  end
+  return false
 end
 
 --- Removes the first line that equals `text` (used to take back the "thinking"
@@ -189,6 +209,7 @@ end
 
 function R:user(text)
   self:finalize()
+  if #self.lines > 0 then self:append("meta", { "" }) end
   local lines = util.lines(text or "")
   if #lines == 0 then lines = { "" } end
   lines[1] = "❯ " .. lines[1]

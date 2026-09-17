@@ -14,6 +14,8 @@ local Renderer = require("opencode-nvim.ui.render")
 local M = {}
 
 local THINKING_LINE = "▸ thinking…"
+local THINKING_HEADER = "▸ thinking"
+local GUTTER = "│ "
 
 local state = {
   buf = nil,
@@ -43,6 +45,19 @@ local state = {
 }
 
 M.state = state
+
+--- Fold expression: reasoning lines (prefixed with the gutter) form one fold.
+function _G.opencode_nvim_foldexpr(lnum)
+  local line = vim.fn.getline(lnum)
+  if line:sub(1, #GUTTER) == GUTTER then return 1 end
+  return 0
+end
+
+--- Fold text for a collapsed reasoning block.
+function _G.opencode_nvim_foldtext()
+  local count = vim.v.foldend - vim.v.foldstart + 1
+  return string.format("%s (%d lines, zo opens) ", THINKING_HEADER, count)
+end
 
 local function err_text(err)
   if type(err) == "table" then return err.message or vim.inspect(err) end
@@ -94,11 +109,18 @@ function M.title()
   return table.concat(parts, " · ")
 end
 
---- Takes back the "thinking" placeholder when real content shows up.
-local function clear_thinking(renderer)
+--- Takes back the "thinking" placeholder when real content shows up. When the
+--- content *is* reasoning the placeholder becomes the block header instead, so
+--- reasoning is always delimited from the answer.
+local function clear_thinking(renderer, as_header)
   if not state.thinking then return end
   state.thinking = false
-  renderer:remove_line(THINKING_LINE)
+  if as_header then
+    if renderer:replace_line(THINKING_LINE, THINKING_HEADER) then return end
+    renderer:remove_line(THINKING_LINE)
+  else
+    renderer:remove_line(THINKING_LINE)
+  end
 end
 
 --- Takes back the stall warning once something finally arrives.
@@ -267,6 +289,15 @@ local function ensure_win()
   vim.wo[state.win].signcolumn = "no"
   vim.wo[state.win].foldcolumn = "0"
   vim.wo[state.win].winhighlight = "Normal:OpencodeNormal,FloatBorder:OpencodeBorder,FloatTitle:OpencodeTitle"
+  if (cfg.get().ui.panel or {}).folds ~= false then
+    -- Reasoning lines carry the gutter, so they can be folded as a block
+    -- (closed by default: `zo` opens one).
+    vim.wo[state.win].foldmethod = "expr"
+    vim.wo[state.win].foldexpr = "v:lua.opencode_nvim_foldexpr(v:lnum)"
+    vim.wo[state.win].foldtext = "v:lua.opencode_nvim_foldtext()"
+    vim.wo[state.win].foldlevel = 0
+    vim.wo[state.win].foldenable = true
+  end
   return state.win
 end
 
@@ -817,11 +848,11 @@ function M.on_event(ev)
   elseif kind == "session.text.ended" then
     renderer:text_finished(util.pick_string(data, { "text" }))
   elseif kind == "session.reasoning.started" then
-    clear_thinking(renderer)
+    clear_thinking(renderer, true)
     clear_stall(renderer)
     renderer:finalize()
   elseif kind == "session.reasoning.delta" then
-    renderer:stream("dim", event_text(data) or "")
+    renderer:stream("dim", event_text(data) or "", GUTTER)
   elseif kind == "session.reasoning.ended" then
     renderer:finalize()
   elseif kind == "session.tool.input.started" then

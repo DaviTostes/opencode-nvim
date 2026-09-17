@@ -98,10 +98,10 @@ Without calling `setup()` the plugin configures itself with the defaults on
     },
     reload = { enabled = true, set_autoread = true },
     ui = {
-      panel = { width = 0.45, height = 0.35, max_width = 110, max_height = 30, border = "rounded" },
+      panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, border = "rounded", folds = true },
       input = { height = 4, border = "rounded" },
       diff = { width = 0.85, height = 0.6, border = "rounded" },
-      focus_after_submit = "code",   -- "code" | "panel" | "input"
+      focus_after_submit = "input",  -- "code" | "panel" | "input"
     },
     keymaps = {
       enabled = true,
@@ -183,7 +183,21 @@ Inside the panel:
 
 While a turn is running the panel shows "▸ thinking…" (which gives way to the
 content as soon as it arrives) and the title counts the elapsed time
-("● 12s"). After 30s without any event a warning shows up in the panel.
+("● 12s"). After 30s without any event a warning shows up in the panel naming
+the last event of the session (use |:OpencodeDoctor| to dig further).
+
+How the panel reads: >
+
+  ❯ your message
+
+  ▸ thinking (12 lines, zo opens)      reasoning, folded by default
+  ▸ read /path/to/file ✓               tool call and its status
+  the answer text                      plain text, no gutter
+<
+Reasoning is folded (zo opens one block, zR opens all) and guttered with "│ ",
+so it stays distinguishable from the answer when expanded. Each new turn is
+separated by a blank line, and after sending the prompt stays open for the next
+message (see `ui.focus_after_submit`).
 
 Inside the prompt:
   <CR>		send

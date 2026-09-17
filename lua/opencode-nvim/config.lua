@@ -57,10 +57,10 @@ M.defaults = {
     set_autoread = true,
   },
   ui = {
-    panel = { width = 0.45, height = 0.35, max_width = 110, max_height = 30, border = "rounded" },
+    panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, border = "rounded", folds = true },
     input = { height = 4, border = "rounded" },
     diff = { width = 0.85, height = 0.6, border = "rounded" },
-    focus_after_submit = "code",
+    focus_after_submit = "input", -- "code" | "panel" | "input"
   },
   keymaps = {
     enabled = true,

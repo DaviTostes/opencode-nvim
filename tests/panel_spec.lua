@@ -245,6 +245,72 @@ test("resolve_model falls back to the TUI preferred model", function()
   assert(known and known.id == "b" and known.variant == "v", vim.inspect(known))
 end)
 
+test("reasoning gets a header, a gutter and a fold", function()
+  plugin.open({ input = false }) -- folds need a window
+  plugin.clear()
+  settle()
+  feed("session.execution.started") -- "▸ thinking…" placeholder
+  settle()
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "let me think" })
+  feed("session.reasoning.delta", { delta = "\nabout this" })
+  feed("session.reasoning.ended")
+  settle()
+
+  local text = panel_text()
+  assert(text:find("▸ thinking", 1, true), "no reasoning header:\n" .. text)
+  assert(text:find("│ let me think", 1, true), "reasoning is not guttered:\n" .. text)
+  assert(text:find("│ about this", 1, true), "second reasoning line lost the gutter:\n" .. text)
+  assert(not text:find("▸ thinking…", 1, true), "the placeholder was not replaced:\n" .. text)
+
+  -- the gutter is what the fold expression keys on (evaluated with the panel
+  -- buffer as current, like Neovim does per window)
+  local buf = panel.state.buf
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local first_gutter
+  vim.api.nvim_buf_call(buf, function()
+    for index, line in ipairs(lines) do
+      local expected = line:sub(1, #"│ ") == "│ " and 1 or 0
+      if expected == 1 and not first_gutter then first_gutter = index end
+      assert(_G.opencode_nvim_foldexpr(index) == expected,
+        string.format("foldexpr(%d) for %q", index, line))
+    end
+  end)
+  assert(first_gutter, "no guttered line found")
+
+  -- and the block is folded closed by default (zo opens it)
+  if vim.wo[panel.state.win].foldenable then
+    local closed = vim.api.nvim_win_call(panel.state.win, function()
+      return vim.fn.foldclosed(first_gutter)
+    end)
+    assert(closed ~= -1, "the reasoning block is not folded closed")
+  end
+  plugin.close()
+end)
+
+test("a new turn is separated and keeps the prompt visible", function()
+  plugin.clear()
+  settle()
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "first answer" })
+  feed("session.text.ended", { text = "first answer" })
+  settle()
+
+  panel.send("second question", {})
+  settle()
+  local lines = vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false)
+  local text = table.concat(lines, "\n")
+  assert(text:find("❯ second question", 1, true), text)
+  -- a blank line separates the turns
+  local blank_before = false
+  for index, line in ipairs(lines) do
+    if line:find("❯ second question", 1, true) and index > 1 and lines[index - 1] == "" then
+      blank_before = true
+    end
+  end
+  assert(blank_before, "there is no blank line before the new turn:\n" .. text)
+end)
+
 test("the stall warning names the last event of the session", function()
   plugin.clear()
   settle()
@@ -317,15 +383,25 @@ test("prompt and panel are aligned and do not overlap", function()
   plugin.close()
 end)
 
-test("submitting goes back to the code window", function()
+test("focus_after_submit honours the configured mode", function()
+  local cfg = require("opencode-nvim.config")
   local target = panel.code_target()
   assert(target and target.win, "no code window found")
+
+  cfg.get().ui.focus_after_submit = "code"
   panel.open()
   assert(panel.state.input.win ~= nil)
   panel.close_input()
   panel.state.input.target = target
   panel.after_submit()
   assert(vim.api.nvim_get_current_win() == target.win, "focus did not return to the code")
+
+  cfg.get().ui.focus_after_submit = "input"
+  panel.after_submit()
+  assert(panel.state.input.win ~= nil, "the prompt was not reopened")
+  assert(vim.api.nvim_get_current_win() == panel.state.input.win, "the prompt did not get focus")
+
+  cfg.get().ui.focus_after_submit = "code"
   plugin.close()
 end)
 
