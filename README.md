@@ -100,7 +100,8 @@ stays open for the next message (`ui.focus_after_submit = "input"`; `"code"`
 jumps back to your code, `"panel"` lands in the panel).
 
 In the prompt: `<CR>` sends, `<C-j>` newline, `<C-x><C-o>` completes files and
-placeholders, `<Esc>` closes.
+placeholders, `<Esc>` closes the prompt **and** the panel (`ui.escape_closes =
+"input"` keeps the panel open). `:Opencode` / `<leader>tt` toggles the whole UI.
 
 In the diff/permission popup: `<CR>` (or `y`) allows once, `A` allows always,
 `x` rejects (with an optional message), `<Esc>`/`q` decides later. In the turn

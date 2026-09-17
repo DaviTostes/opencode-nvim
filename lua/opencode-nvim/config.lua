@@ -61,6 +61,7 @@ M.defaults = {
     input = { height = 4, border = "rounded" },
     diff = { width = 0.85, height = 0.6, border = "rounded" },
     focus_after_submit = "input", -- "code" | "panel" | "input"
+    escape_closes = "all", -- <Esc> in the prompt closes the panel too ("input" keeps it)
   },
   keymaps = {
     enabled = true,

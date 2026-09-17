@@ -103,6 +103,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
       input = { height = 4, border = "rounded" },
       diff = { width = 0.85, height = 0.6, border = "rounded" },
       focus_after_submit = "input",  -- "code" | "panel" | "input"
+      escape_closes = "all",       -- <Esc> in the prompt closes the panel too
     },
     keymaps = {
       enabled = true,
@@ -239,8 +240,12 @@ Inside the prompt:
   <CR>		send
   <C-j>		newline
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
-  <Esc>		close without sending
+  <Esc>		close the prompt and the panel (ui.escape_closes)
   <C-c>		cancel the current turn
+
+Closing the UI: <Esc> in the prompt, q or <Esc> in the panel, or the toggle
+(`:Opencode` / <leader>tt). `ui.escape_closes = "input"` makes <Esc> close only
+the prompt.
 
 In the permission/diff popup:
   <CR>, y	allow once

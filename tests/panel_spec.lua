@@ -432,6 +432,38 @@ test("the stall warning names the last event of the session", function()
   assert(text:find("late answer", 1, true), text)
 end)
 
+test("reasoning around a tool call stays in one block", function()
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "The user says" })
+  -- the server interleaves the tool call *inside* the reasoning part
+  feed("session.tool.input.started", { id = "c1", name = "read" })
+  feed("session.reasoning.ended")
+  feed("session.tool.input.ended", { id = "c1", text = '{"filePath":"/tmp/a.lua"}' })
+  feed("session.tool.called", { id = "c1", input = { filePath = "/tmp/a.lua" } })
+  feed("session.tool.success", { id = "c1", content = { { type = "text", text = "ok" } } })
+  settle()
+
+  local lines = vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false)
+  local text = table.concat(lines, "\n")
+  local headers = 0
+  for _, line in ipairs(lines) do
+    if line == "▸ thinking" then headers = headers + 1 end
+  end
+  assert(headers == 1, "expected a single reasoning header:\n" .. text)
+
+  local reasoning_at, tool_at
+  for index, line in ipairs(lines) do
+    if line:find("│ The user says", 1, true) then reasoning_at = index end
+    if line:find("▸ read /tmp/a.lua", 1, true) then tool_at = index end
+  end
+  assert(reasoning_at and tool_at and reasoning_at < tool_at,
+    "reasoning and tool are out of order:\n" .. text)
+  assert(not text:find("▸ The", 1, true), "the reasoning fragment leaked as a header:\n" .. text)
+end)
+
 test("a fresh session does not wipe the panel", function()
   local session = require("opencode-nvim.session")
   local saved_current, saved_sid = session.current, panel.state.session_id
@@ -449,6 +481,14 @@ test("a fresh session does not wipe the panel", function()
   local text = panel_text()
   assert(text:find("thinking", 1, true), "the prompt was wiped when the session was created:\n" .. text)
   assert(session.current.fresh == nil, "the fresh flag should be consumed")
+
+  -- and only ONE placeholder: resetting the flag without clearing the line used
+  -- to add a second one (the first message showed two "▸ thinking…")
+  local placeholders = 0
+  for _, line in ipairs(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false)) do
+    if line:find("▸ thinking…", 1, true) then placeholders = placeholders + 1 end
+  end
+  assert(placeholders == 1, string.format("expected one placeholder, found %d:\n%s", placeholders, text))
 
   session.current, panel.state.session_id = saved_current, saved_sid
 end)
@@ -475,6 +515,39 @@ test("prompt and panel are aligned and do not overlap", function()
   assert(panel_outer_bottom < input_outer_top,
     string.format("prompt overlaps the panel: panel_bottom=%d prompt_top=%d", panel_outer_bottom, input_outer_top))
   plugin.close()
+end)
+
+test("<Esc> in the prompt leaves the whole UI", function()
+  local cfg = require("opencode-nvim.config")
+
+  plugin.open()
+  assert(panel.visible() and panel.state.input.win ~= nil, "the UI did not open")
+  panel.escape()
+  settle()
+  assert(panel.state.input.win == nil, "the prompt is still open")
+  assert(not panel.visible(), "the panel is still open")
+
+  -- "<Esc> only closes the prompt" stays available
+  cfg.get().ui.escape_closes = "input"
+  plugin.open()
+  panel.escape()
+  settle()
+  assert(panel.state.input.win == nil, "the prompt is still open")
+  assert(panel.visible(), "the panel should have stayed open")
+
+  cfg.get().ui.escape_closes = "all"
+  plugin.close()
+end)
+
+test("clear() resets the per-turn state", function()
+  -- a stale "thinking" flag used to swallow the next turn's placeholder
+  panel.state.thinking = true
+  panel.state.reasoning_open = true
+  panel.state.pending_tools = { stale = { name = "read" } }
+  plugin.clear()
+  assert(panel.state.thinking == false, "thinking flag survived clear()")
+  assert(panel.state.reasoning_open == false, "reasoning flag survived clear()")
+  assert(next(panel.state.pending_tools) == nil, "pending tools survived clear()")
 end)
 
 test("focus_after_submit honours the configured mode", function()

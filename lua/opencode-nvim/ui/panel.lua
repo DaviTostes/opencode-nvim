@@ -28,6 +28,8 @@ local state = {
   geom = nil,
   session_id = nil,
   thinking = false,
+  reasoning_open = false,
+  pending_tools = {},
   stall_text = nil,
   running_since = nil,
   warned_slow = false,
@@ -120,6 +122,39 @@ local function clear_thinking(renderer, as_header)
     renderer:remove_line(THINKING_LINE)
   else
     renderer:remove_line(THINKING_LINE)
+  end
+end
+
+--- Reasoning arrives interleaved with tool calls (the server emits
+--- `tool.input.started` in the middle of a reasoning part), so a header is
+--- ensured per reasoning run instead of relying on the placeholder alone.
+local function ensure_reasoning_header(renderer)
+  if state.reasoning_open then return end
+  state.reasoning_open = true
+  -- The placeholder of this turn becomes the header when it is still around.
+  if not renderer:replace_line(THINKING_LINE, THINKING_HEADER) then
+    renderer:note(THINKING_HEADER, "meta")
+  end
+end
+
+--- Tool headers are deferred until their arguments are complete, so the
+--- reasoning around a tool call stays in a single block (and the header gets
+--- the useful summary on the first render).
+local function flush_tool(renderer, id, name, args)
+  local pending = state.pending_tools[id]
+  state.pending_tools[id] = nil
+  name = name or (pending and pending.name)
+  args = args or (pending and pending.args)
+  state.reasoning_open = false
+  renderer:tool_begin(id, name)
+  if args ~= nil then
+    renderer:tool_called(id, name, args)
+  end
+end
+
+local function flush_all_tools(renderer)
+  for id in pairs(state.pending_tools) do
+    flush_tool(renderer, id)
   end
 end
 
@@ -360,7 +395,7 @@ function M.input_buf()
   local opts = { buffer = buf, nowait = true, silent = true }
   vim.keymap.set({ "i", "n" }, "<CR>", function() M.submit() end, opts)
   vim.keymap.set({ "i", "n" }, "<C-j>", function() M.insert_newline() end, opts)
-  vim.keymap.set({ "i", "n" }, "<Esc>", function() M.close_input() end, opts)
+  vim.keymap.set({ "i", "n" }, "<Esc>", function() M.escape() end, opts)
   vim.keymap.set({ "i", "n" }, "<C-c>", function() M.interrupt() end, opts)
   vim.keymap.set({ "i", "n" }, "<C-l>", function()
     if cfg.get().permissions == false then
@@ -654,7 +689,22 @@ function M.review_turn()
 end
 
 function M.clear()
+  -- The per-turn bookkeeping has to go too: a stale `thinking` flag would
+  -- swallow the next turn's placeholder and a stale tool would never render.
+  state.thinking = false
+  state.reasoning_open = false
+  state.pending_tools = {}
+  state.stall_text = nil
   M.renderer():clear()
+end
+
+--- `<Esc>` inside the prompt: leave the prompt, and the panel as well by
+--- default so a single key gets the whole UI out of the way.
+--- `ui.escape_closes = "input"` keeps the panel open instead.
+function M.escape()
+  local mode = (cfg.get().ui or {}).escape_closes or "all"
+  M.close_input()
+  if mode ~= "input" then M.close() end
 end
 
 --------------------------------------------------------------------------------
@@ -747,10 +797,12 @@ function M.on_session(info)
   -- Re-rendering the same session would wipe text that is still streaming.
   if state.session_id == info.id then return end
   state.session_id = info.id
-  state.thinking = false
-  state.stall_text = nil
-  if fresh then return end
+  if fresh then return end -- a fresh session has no history; keep what is on screen
 
+  state.thinking = false
+  state.reasoning_open = false
+  state.pending_tools = {}
+  state.stall_text = nil
   M.renderer():clear()
   M.load_history()
 end
@@ -839,37 +891,47 @@ function M.on_event(ev)
   if kind == "server.connected" then
     M.update_title()
   elseif kind == "session.text.started" then
+    flush_all_tools(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)
+    state.reasoning_open = false
     renderer:finalize()
     M.set_status("running")
   elseif kind == "session.text.delta" then
+    clear_thinking(renderer)
+    state.reasoning_open = false
     renderer:stream("text", event_text(data) or "")
   elseif kind == "session.text.ended" then
     renderer:text_finished(util.pick_string(data, { "text" }))
   elseif kind == "session.reasoning.started" then
-    clear_thinking(renderer, true)
     clear_stall(renderer)
     renderer:finalize()
   elseif kind == "session.reasoning.delta" then
+    ensure_reasoning_header(renderer)
     renderer:stream("dim", event_text(data) or "", GUTTER)
   elseif kind == "session.reasoning.ended" then
     renderer:finalize()
   elseif kind == "session.tool.input.started" then
-    clear_thinking(renderer)
+    -- Deferred: rendering now would split the reasoning around the call.
     clear_stall(renderer)
-    renderer:tool_begin(tool_id(data) or "tool", tool_name(data))
+    state.pending_tools[tool_id(data) or "tool"] = { name = tool_name(data), args = "" }
   elseif kind == "session.tool.input.delta" then
-    renderer:tool_args(tool_id(data) or "tool", event_text(data))
+    local pending = state.pending_tools[tool_id(data) or "tool"]
+    if pending then pending.args = (pending.args or "") .. (event_text(data) or "") end
   elseif kind == "session.tool.input.ended" then
     -- The complete JSON arguments arrive here; treat them as the source of truth.
-    renderer:tool_called(tool_id(data) or "tool", tool_name(data), util.pick_string(data, { "text" }))
+    flush_tool(renderer, tool_id(data) or "tool", tool_name(data),
+      util.pick_string(data, { "text" }))
   elseif kind == "session.tool.called" then
-    renderer:tool_called(tool_id(data) or "tool", tool_name(data), data.args or data.input)
+    flush_tool(renderer, tool_id(data) or "tool", tool_name(data), data.args or data.input)
   elseif kind == "session.tool.success" then
-    renderer:tool_end(tool_id(data) or "tool", true, tool_output(data))
+    local id = tool_id(data) or "tool"
+    if state.pending_tools[id] then flush_tool(renderer, id) end
+    renderer:tool_end(id, true, tool_output(data))
   elseif kind == "session.tool.failed" then
-    renderer:tool_end(tool_id(data) or "tool", false, tool_output(data))
+    local id = tool_id(data) or "tool"
+    if state.pending_tools[id] then flush_tool(renderer, id) end
+    renderer:tool_end(id, false, tool_output(data))
   elseif kind == "session.execution.started" then
     M.set_status("running")
     if not state.thinking then
@@ -877,15 +939,21 @@ function M.on_event(ev)
       renderer:note(THINKING_LINE, "meta")
     end
   elseif kind == "session.execution.succeeded" or kind == "session.execution.interrupted" then
+    flush_all_tools(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)
+    state.reasoning_open = false
+    state.pending_tools = {}
     renderer:finalize()
     M.set_status("idle")
     M.update_title()
     vim.defer_fn(M.review_turn, 150)
   elseif kind == "session.execution.failed" then
+    flush_all_tools(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)
+    state.reasoning_open = false
+    state.pending_tools = {}
     M.set_status("error")
     local message = util.deep_find(data, { "message" })
     if message then

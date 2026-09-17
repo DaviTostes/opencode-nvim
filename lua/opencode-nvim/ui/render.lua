@@ -174,11 +174,11 @@ function R:block(kind, text)
   self:flush()
 end
 
---- Replaces the first line equal to `old` (turns the "thinking" placeholder
---- into the block header).
+--- Replaces the last line equal to `old` (turns the "thinking" placeholder
+--- into the block header: the placeholder of the current turn is the newest).
 ---@return boolean replaced
 function R:replace_line(old, new)
-  for index = 1, #self.lines do
+  for index = #self.lines, 1, -1 do
     if self.lines[index] == old then
       self.lines[index] = new
       self.committed = math.min(self.committed, index - 1)
