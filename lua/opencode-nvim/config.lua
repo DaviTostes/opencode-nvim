@@ -58,7 +58,17 @@ M.defaults = {
     set_autoread = true,
   },
   ui = {
-    panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, border = "rounded", folds = true },
+    panel = {
+      width = 0.42,
+      height = 0.32,
+      max_width = 100,
+      max_height = 22,
+      border = "rounded",
+      folds = true,
+      -- false keeps the tool headers but drops their body: that is where an edit
+      -- tool prints its patch, so this hides diffs from the panel
+      tool_output = true,
+    },
     input = { height = 4, border = "rounded" },
     diff = { width = 0.85, height = 0.6, border = "rounded" },
     -- Opening the panel on purpose (a command or the toggle) focuses it, so its
@@ -118,6 +128,19 @@ local BASE_POLICY = {
   { action = "read", resource = "*.env.*", effect = "ask" },
   { action = "read", resource = "*.env.example", effect = "allow" },
 }
+
+--- Settings for the approval flow.
+---
+--- `approval = false` disables all of it: no diff review after a turn and no
+--- pre-approval agent, so the plugin never opens a diff dialog.
+---@return table
+function M.approval()
+  local approval = M.options.approval
+  if approval == false or approval == nil then
+    return { enabled = false, review = false, auto_detect = false, agent = nil }
+  end
+  return approval
+end
 
 --- Ruleset sent when creating a session.
 ---

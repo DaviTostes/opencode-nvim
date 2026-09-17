@@ -120,7 +120,7 @@ end
 ---@return string|nil agent
 function M.pick_agent(agents, explicit)
   if explicit then return explicit end
-  local approval = cfg.get().approval or {}
+  local approval = cfg.approval()
 
   if approval.agent and find_agent(agents, approval.agent) then
     return approval.agent
@@ -282,7 +282,7 @@ end
 --- agent can be re-checked and switched to an approval agent when one exists.
 local function finalize_agent(info, cb)
   local directory = info.location and info.location.directory or M.directory()
-  local approval = cfg.get().approval or {}
+  local approval = cfg.approval()
   -- Wait for whichever agent tells us the location's config has been read.
   local wait_for = info.agent or approval.agent or cfg.get().agent
 
@@ -331,7 +331,7 @@ function M.ensure(opts, cb)
     return cb(nil, M.current)
   end
 
-  local approval = cfg.get().approval or {}
+  local approval = cfg.approval()
   local agent = opts.agent or M.pick_agent(cached_agents(directory))
   -- NOTE: never *speculate* the approval agent name here. The server accepts an
   -- unknown agent at creation time and only fails when the turn runs

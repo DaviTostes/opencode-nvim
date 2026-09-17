@@ -84,6 +84,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
     approval = {
       review = "notify",       -- "notify" (no focus stealing) | "popup" | false
       agent = "opencode-nvim", -- agent whose rules ask for approval
+      -- approval = false,      -- disable review AND pre-approval: no diff dialogs
       auto_detect = true,      -- use any agent that asks for approval
       permissions = {          -- rules written by :OpencodeApprovalAgent
         { action = "edit", resource = "*", effect = "ask" },
@@ -105,6 +106,8 @@ Without calling `setup()` the plugin configures itself with the defaults on
       focus_on_open = true,          -- opening the panel focuses it
       focus_after_submit = "input",  -- "input": stay in the prompt (never closed, only
                                     -- cleared) | "code" | "panel"
+      panel = { tool_output = true }, -- false: keep the tool headers, drop their body
+                                      -- (that is where an edit prints its patch)
       escape_closes = "panel",       -- <Esc>: "panel" | "all" | "input"
       escape_closes = "all",       -- <Esc> in the prompt closes the panel too
     },

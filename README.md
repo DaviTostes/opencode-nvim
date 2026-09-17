@@ -1,7 +1,7 @@
 # opencode-nvim
 
-Drive OpenCode from Neovim. The panel floats bottom-right and stays out of the
-way: answers stream while you keep editing.
+Drive OpenCode from Neovim. The panel floats bottom-right and streams answers
+while you keep editing.
 
 ## Requirements
 
@@ -14,78 +14,58 @@ vim.pack.add({ { src = "https://github.com/<you>/opencode-nvim" } })
 require("opencode-nvim").setup({})
 ```
 
-Local development: `vim.opt.rtp:prepend("/home/toast/opencode-nvim")`.
+Local dev: `vim.opt.rtp:prepend("/home/toast/opencode-nvim")`.
 
 ## Quick start
 
 ```
-:Opencode          show/hide the panel
-:OpencodeAsk       open the prompt and type
-<CR>               send
-<Esc>              leave
+:Opencode      show/hide the panel
+:OpencodeAsk   open the prompt and type
+<CR> send      <Esc> leave
 ```
 
-Opening the panel takes the cursor, so its keys (`gd` diff, `r` resend, `zo`
-unfold, `q` close) work right away and streaming never pulls you in;
-`:OpencodeFocus` switches between the panel and your code. `:OpencodeAsk`
-and `:OpencodeEdit` accept a range, so `:'<,'>OpencodeAsk` works from visual
-mode. No keymaps are installed by default; set `vim.g.mapleader` before
-`setup()` and see `:help opencode-nvim` for the `keymaps` options.
+The panel takes the cursor, so its keys (`gd` diff, `r` resend, `zo` unfold,
+`q` close) work right away and streaming never pulls you away;
+`:OpencodeFocus` switches between panel and code. `:OpencodeAsk` and
+`:OpencodeEdit` accept a range. No keymaps by default — set `vim.g.mapleader`
+before `setup()`.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `:Opencode` | show/hide the panel (focuses it) |
-| `:OpencodeClose` | close the panel |
-| `:OpencodeAsk [text]` | ask; with a range it sends the selection |
-| `:OpencodeEdit` | ask for a change in the selection (or file) |
+| `:Opencode` / `:OpencodeClose` | show/hide (focuses) · close the panel |
+| `:OpencodeAsk [text]` / `:OpencodeEdit` | ask · change the selection or file |
 | `:OpencodeActions` | pick a ready-made action |
-| `:OpencodeResend` | send the last prompt again |
-| `:OpencodeInterrupt` | interrupt the running turn |
-| `:OpencodeUndo` | undo the last turn and restore the files |
-| `:OpencodeDiff` | diff of the last turn (or of the working tree) |
-| `:OpencodeClear` | clear the panel |
-| `:OpencodeNew` | new session in this directory |
-| `:OpencodeAttach {id}` | attach an existing session |
-| `:OpencodeSessions` | pick a session |
+| `:OpencodeResend` / `:OpencodeInterrupt` / `:OpencodeUndo` | resend · interrupt · undo the last turn |
+| `:OpencodeDiff` / `:OpencodeClear` | diff of the last turn · clear the panel |
+| `:OpencodeNew` / `:OpencodeAttach {id}` / `:OpencodeSessions` | new · attach · pick a session |
 | `:OpencodeModels` / `:OpencodeAgents` | pick the model / agent |
-| `:OpencodeApproval` | in-editor approval status |
-| `:OpencodeApprovalAgent` | create the approval agent in the OpenCode config |
-| `:OpencodePermissions` | decide permissions you left for later |
-| `:OpencodeQuestion` | show the question waiting for an answer (digit picks an option, `o` types your own, `<Esc>` later) |
-| `:OpencodeFocus` | switch the cursor between the panel and your code |
-| `:OpencodeDoctor` | diagnose a turn that never answers |
-| `:OpencodeHealth` / `:OpencodeEvents` / `:OpencodeLog` | connection, event log, log level |
+| `:OpencodeApproval` / `:OpencodeApprovalAgent` / `:OpencodePermissions` | approval status · create the approval agent · decide pending permissions |
+| `:OpencodeQuestion` | show the waiting question (digit picks, `o` types, `<Esc>` later) |
+| `:OpencodeFocus` / `:OpencodeDoctor` | move the cursor · diagnose a stuck turn |
+| `:OpencodeHealth` / `:OpencodeEvents` / `:OpencodeLog` | connection · event log · log level |
 
-## Tips
+## Behavior
 
-- **Ask about what you are looking at.** Select code and run `:'<,'>OpencodeAsk`,
-  or call it with the cursor on a line: the prompt gets `[editor context]
-  file=... cursor=...` plus the selection, filetype, `modified=true` and the
-  diagnostics count.
-- **Make it write code.** `:'<,'>OpencodeEdit` then describe the change; `<CR>`
-  approves the diff, the file is written and the buffer reloads keeping your
-  cursor (`u` undoes the buffer). `:OpencodeActions` offers ready-made prompts
-  (explain, find bugs, write tests, refactor, document, commit message).
-- **Review a turn.** A turn that touches files only notifies you without
-  stealing focus; `:OpencodeDiff` opens the diff, where `u` undoes the whole turn
-  and `<CR>` keeps it. `approval = { review = "popup" }` restores the popup.
-- **A turn that never answers.** The panel warns at 30s; `<C-c>` interrupts, `r`
-  resends, and `:OpencodeDoctor` prints the server, stream, session state, last
-  events and last nvim error.
-- **Models and reasoning.** The plugin uses the model you last used in the TUI;
-  pin one with `model = { providerID = "...", id = "..." }` or pick live with
-  `:OpencodeModels`. Reasoning is folded under a `▸ thinking` header (`zo`/`zR`).
-- **Panel and popup keys.** Panel: `i`/`a`/`<CR>` prompt · `q`/`<Esc>` close ·
-  `<C-c>` interrupt · `gd` diff · `r` resend · `G` go to the end (scroll up to
-  stop following the stream). Popups: `<CR>`/`y` allow once · `A` allow always ·
-  `x` reject · `<Esc>`/`q` later.
-- **Undo needs git.** Turn diffs and file restores use OpenCode snapshots (git);
-  outside a repository the diff falls back to the working tree.
-
-`@this`, `@buffer`, `@buffers`, `@diagnostics` and `@diff` are optional context
-markers; `context.auto` already prepends the header and selection.
+- **Context.** `:'<,'>OpencodeAsk`, or asking on a line, sends the file, cursor,
+  selection, filetype, `modified` flag and diagnostic count. `@this`,
+  `@buffer`, `@buffers`, `@diagnostics`, `@diff` are optional markers.
+- **Edits.** `:'<,'>OpencodeEdit` describes a change; `<CR>` approves the diff,
+  writes the file and reloads the buffer keeping your cursor (`u` undoes).
+  `:OpencodeActions` offers explain, find bugs, tests, refactor, docs, commit.
+- **Review.** File-only turns notify without stealing focus; `:OpencodeDiff`
+  opens the diff (`u` undoes the turn, `<CR>` keeps it), or set
+  `approval = { review = "popup" }`. Undo needs git; otherwise the diff falls
+  back to the working tree.
+- **Stuck turn.** The panel warns at 30s; `<C-c>` interrupts, `r` resends, and
+  `:OpencodeDoctor` prints the server, stream, session, last events and error.
+- **Models.** Uses your last TUI model; pin it with
+  `model = { providerID = "...", id = "..." }` or pick with `:OpencodeModels`.
+  Reasoning folds under `▸ thinking` (`zo`/`zR`).
+- **Keys.** Panel: `i`/`a`/`<CR>` prompt · `q`/`<Esc>` close · `<C-c>` interrupt ·
+  `gd` diff · `r` resend · `G` end (scroll up to stop following). Popups:
+  `<CR>`/`y` allow once · `A` always · `x` reject · `<Esc>`/`q` later.
 
 ## Configuration
 
@@ -95,6 +75,7 @@ require("opencode-nvim").setup({
   model = nil,                            -- nil = the last model used in the TUI
   approval = {
     review = "notify",                    -- "notify" | "popup" | false
+    -- approval = false,                  -- no review and no pre-approval dialog at all
     agent = "opencode-nvim",              -- agent whose rules ask for approval
     auto_detect = true,                   -- use any agent that asks
   },
@@ -105,6 +86,7 @@ require("opencode-nvim").setup({
     focus_on_open = true,                 -- opening the panel focuses it
     focus_after_submit = "input",         -- "input" | "code" | "panel"
     escape_closes = "panel",              -- <Esc>: "panel" | "all" | "input"
+    panel = { tool_output = true },       -- false: no tool bodies (no diffs in the panel)
   },
 })
 ```
@@ -114,8 +96,8 @@ Options, keymaps, events and the Lua API are in
 
 ## Tests
 
-`make test` and `make lint` run offline; the `make e2e*`, `make ui-smoke` and
-`make probe*` targets use the real protocol. See the `Makefile`.
+`make test` and `make lint` run offline; `make e2e*`, `make ui-smoke` and
+`make probe*` use the real protocol. See the `Makefile`.
 
 ## License
 

@@ -877,7 +877,7 @@ end
 --- After a turn that touched files, show what changed so it can be kept or
 --- undone. Used when the session is not in pre-approval mode.
 function M.review_turn()
-  local approval = cfg.get().approval or {}
+  local approval = cfg.approval()
   if approval.review == false or approval.review == "off" then return end
   if session.approval_active() then return end
 
@@ -1069,6 +1069,13 @@ end
 ---
 --- This used to accept everything while there was no session yet, which meant a
 --- TUI session running in another terminal streamed its text into this panel.
+--- Body of a tool result, honouring `ui.panel.tool_output` (an edit tool prints
+--- its patch as its body, so this is what hides diffs from the panel).
+local function tool_body(data)
+  if (cfg.get().ui.panel or {}).tool_output == false then return nil end
+  return tool_output(data)
+end
+
 local function belongs_here(data)
   local current = session.id()
   if not current then return false end
@@ -1186,11 +1193,11 @@ function M.on_event(ev)
   elseif kind == "session.tool.success" then
     local id = tool_id(data) or "tool"
     if state.pending_tools[id] then flush_tool(renderer, id) end
-    renderer:tool_end(id, true, tool_output(data))
+    renderer:tool_end(id, true, tool_body(data))
   elseif kind == "session.tool.failed" then
     local id = tool_id(data) or "tool"
     if state.pending_tools[id] then flush_tool(renderer, id) end
-    renderer:tool_end(id, false, tool_output(data))
+    renderer:tool_end(id, false, tool_body(data))
   elseif kind == "session.execution.started" then
     M.set_status("running")
     if not state.thinking then

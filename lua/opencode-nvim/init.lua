@@ -434,7 +434,7 @@ function M.global_config_path()
 end
 
 local function approval_agent_definition()
-  local approval = cfg.get().approval or {}
+  local approval = cfg.approval()
   return {
     description = "OpenCode inside Neovim: asks for approval before editing files and running shell",
     mode = "primary",
@@ -479,7 +479,7 @@ function M.setup_approval_agent()
   local path = M.global_config_path()
   local text = vim.fn.filereadable(path) == 1 and table.concat(vim.fn.readfile(path), "\n") or ""
   local config = util.decode(text)
-  local name = (cfg.get().approval or {}).agent or "opencode-nvim"
+  local name = cfg.approval().agent or "opencode-nvim"
 
   if text ~= "" and config == nil then
     require("opencode-nvim.ui.diff").text({
@@ -507,7 +507,7 @@ end
 --- Shows which agents pause for approval.
 function M.approval_status()
   session.agents(function(err, agents)
-    local approval = cfg.get().approval or {}
+    local approval = cfg.approval()
     local configured = approval.agent or "opencode-nvim"
     local lines = { "In-editor approval (diff before writing)", "" }
 
@@ -731,7 +731,7 @@ function M.doctor()
 
   job(function(cb)
     local options = cfg.get()
-    local approval = options.approval or {}
+    local approval = cfg.approval()
     local ui = options.ui or {}
     cb(string.format("config: agent=%s  approval.agent=%s  review=%s  autoread=%s",
       tostring(options.agent), tostring(approval.agent), tostring(approval.review), tostring(vim.o.autoread)))
@@ -740,6 +740,9 @@ function M.doctor()
     lines[#lines + 1] = string.format("focus: open=%s  after_submit=%s  escape=%s  keymaps=%s",
       tostring(ui.focus_on_open), tostring(ui.focus_after_submit), tostring(ui.escape_closes),
       tostring((options.keymaps or {}).enabled))
+    lines[#lines + 1] = string.format("approval: enabled=%s  review=%s  agent=%s  tool_output=%s",
+      tostring(cfg.approval().enabled ~= false), tostring(cfg.approval().review),
+      tostring(cfg.approval().agent), tostring((ui.panel or {}).tool_output))
   end)
 
   -- Never leave the user without an answer, even if a probe hangs.

@@ -806,6 +806,53 @@ test("session creation always calls back (error instead of hanging)", function()
   discovery.reset()
 end)
 
+test("approval = false disables the whole approval flow", function()
+  local cfg = require("opencode-nvim.config")
+  local session = require("opencode-nvim.session")
+  local saved = cfg.get().approval
+
+  cfg.setup({ approval = false })
+  local approval = cfg.approval()
+  assert(approval.review == false, vim.inspect(approval))
+  assert(approval.auto_detect == false, vim.inspect(approval))
+  assert(approval.agent == nil, vim.inspect(approval))
+
+  -- and no approval agent is picked, even when one exists
+  local agents = {
+    { id = "build", mode = "primary", permissions = { { action = "edit", resource = "*", effect = "ask" } } },
+  }
+  local picked = session.pick_agent(agents)
+  assert(picked == cfg.get().agent, "an approval agent was picked: " .. tostring(picked))
+
+  cfg.setup({ approval = saved })
+end)
+
+test("tool_output = false hides the tool body (no diffs in the panel)", function()
+  local cfg = require("opencode-nvim.config")
+  plugin.clear()
+  settle()
+
+  cfg.get().ui.panel.tool_output = true
+  feed("session.tool.input.started", { id = "c9", name = "edit" })
+  feed("session.tool.input.ended", { id = "c9", text = '{"filePath":"/tmp/x.lua"}' })
+  feed("session.tool.success", { id = "c9", content = { { type = "text", text = "+new line" } } })
+  settle()
+  assert(panel_text():find("+new line", 1, true), "the body should show by default:\n" .. panel_text())
+
+  plugin.clear()
+  cfg.get().ui.panel.tool_output = false
+  feed("session.tool.input.started", { id = "c10", name = "edit" })
+  feed("session.tool.input.ended", { id = "c10", text = '{"filePath":"/tmp/y.lua"}' })
+  feed("session.tool.success", { id = "c10", content = { { type = "text", text = "+SECRET LINE" } } })
+  settle()
+  local text = panel_text()
+  assert(not text:find("SECRET LINE", 1, true), "the body leaked with tool_output = false:\n" .. text)
+  assert(text:find("edit", 1, true), "the tool header should stay:\n" .. text)
+
+  cfg.get().ui.panel.tool_output = true
+  plugin.clear()
+end)
+
 test("defaults do not steal focus", function()
   local defaults = require("opencode-nvim.config").defaults
   assert(defaults.approval.review == "notify",
