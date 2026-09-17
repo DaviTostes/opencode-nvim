@@ -17,6 +17,33 @@ function M.setup(opts)
   if opts.file then M.file = opts.file end
 end
 
+-- The log file stays open: `io.open` + `close` on every message is two
+-- syscalls per event while a turn streams. `setvbuf("no")` keeps the file
+-- readable while Neovim is still running.
+local log_file, log_path = nil, nil
+
+local function open_log_file(path)
+  if log_file and log_path == path then return log_file end
+  if log_file then
+    log_file:close()
+    log_file, log_path = nil, nil
+  end
+  local fd = io.open(path, "a")
+  if not fd then return nil end
+  -- a logging bug must never raise: the caller is usually inside an event
+  pcall(function() fd:setvbuf("no") end)
+  log_file, log_path = fd, path
+  return fd
+end
+
+--- Close the log file (called on exit, and by tests).
+function M.close_file()
+  if log_file then
+    log_file:close()
+    log_file, log_path = nil, nil
+  end
+end
+
 local function stringify(value)
   if type(value) == "string" then return value end
   local ok, out = pcall(vim.inspect, value)
@@ -32,10 +59,9 @@ function M.log(level, ...)
   local message = table.concat(parts, " ")
 
   if M.file then
-    local fd = io.open(M.file, "a")
+    local fd = open_log_file(M.file)
     if fd then
       fd:write(string.format("%s [%s] %s\n", os.date("%H:%M:%S"), level, message))
-      fd:close()
     end
   end
 

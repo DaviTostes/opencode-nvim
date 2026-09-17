@@ -73,7 +73,7 @@ test("streams frames split across chunks", function()
       if not data then return end
       client:read_stop()
       -- Deliberately split a frame in the middle.
-      local payload = 'data: {"type":"session.text.delta","data":{"delta":"oi"}}\n\n'
+      local payload = 'data: {"type":"session.text.delta","data":{"delta":"hi"}}\n\n'
       local cut = 20
       client:write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
       local function chunk(text)
@@ -96,7 +96,7 @@ test("streams frames split across chunks", function()
     end,
     on_end = function() done = true end,
   })
-  assert(vim.wait(3000, function() return done end, 10), "timeout no stream")
+  assert(vim.wait(3000, function() return done end, 10), "stream timeout")
   handle.close()
   local text = table.concat(received)
   assert(text:find("session.text.delta", 1, true), text)
@@ -107,5 +107,5 @@ test("status reports off by default", function()
   assert(sse.status() == "off", sse.status())
 end)
 
-io.write(string.format("\n%d falha(s)\n", failures))
+io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

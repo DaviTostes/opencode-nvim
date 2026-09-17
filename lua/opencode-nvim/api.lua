@@ -167,7 +167,7 @@ function M.reply_permission(id, request_id, decision, message, cb)
     request({ method = "POST", path = path, body = body, timeout = 15000 },
       function(err, decoded, status)
         if err and allow_fallback and type(err) == "table" and err.code == 400 then
-          log.debug("reply com a chave '" .. key .. "' was rejected; trying the other one")
+          log.debug("permission reply with the key '" .. key .. "' was rejected; trying the other one")
           return send(key == "reply" and "decision" or "reply", false)
         end
         if cb then cb(err, decoded, status) end

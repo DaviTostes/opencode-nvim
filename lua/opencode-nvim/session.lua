@@ -11,7 +11,6 @@ local M = {}
 
 ---@type table?
 M.current = nil
-local agents_cache = nil
 
 function M.id()
   return M.current and M.current.id or nil
@@ -478,7 +477,7 @@ function M.prompt(text, opts, cb)
     -- Connect the event stream first so no delta is missed.
     if sse.connected() then return send() end
     sse.ensure(function(stream_err)
-      if stream_err then log.warn("stream de eventos: " .. tostring(stream_err)) end
+      if stream_err then log.warn("event stream: " .. tostring(stream_err)) end
       send()
     end)
   end)

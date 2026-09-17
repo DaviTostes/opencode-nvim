@@ -22,7 +22,7 @@ function M.check()
   end
 
   if vim.fn.executable(info.command or "opencode2") == 1 then
-    vim.health.ok("comando encontrado: " .. tostring(info.command))
+    vim.health.ok("command found: " .. tostring(info.command))
   else
     vim.health.error("'" .. tostring(info.command) .. "' is not in PATH (adjust server.command)")
   end
@@ -35,14 +35,14 @@ function M.check()
   end
 
   if vim.o.autoread then
-    vim.health.ok("'autoread' ligado (buffers recarregam sozinhos)")
+    vim.health.ok("'autoread' is on (buffers reload by themselves)")
   else
     vim.health.warn("'autoread' is off — AI edits will not reload buffers automatically")
   end
 
   local ok_event, event = pcall(require, "opencode-nvim.event")
   if ok_event then
-    vim.health.info("stream de eventos: " .. event.status())
+    vim.health.info("event stream: " .. event.status())
   end
 
   local ok_session, session = pcall(require, "opencode-nvim.session")

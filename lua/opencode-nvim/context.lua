@@ -128,7 +128,12 @@ local function fmt_diff(opts)
   -- `vim.system` with a timeout: a huge diff in a big repository used to block
   -- the editor while it was generated.
   local ok, result = pcall(function()
-    return vim.system({ "git", "-C", dir, "diff", "--no-color", "--no-ext-diff" }, { text = true }):wait(3000)
+    local process = vim.system({ "git", "-C", dir, "diff", "--no-color", "--no-ext-diff" }, { text = true })
+    local completed = process:wait(3000)
+    -- `wait` gives up on the timeout but leaves the process running: kill it,
+    -- otherwise a slow git keeps working for a diff nobody is going to read.
+    if not completed then pcall(function() process:kill("sigkill") end) end
+    return completed
   end)
   if not ok or type(result) ~= "table" or result.code ~= 0 then return "(no changes)" end
   local output = result.stdout or ""

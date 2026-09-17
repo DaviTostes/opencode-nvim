@@ -76,7 +76,7 @@ event.on_any(function(ev)
     state.asked[#state.asked + 1] = data
     io.write(string.format("   permission.asked: action=%s resources=%s\n",
       tostring(data.action), vim.inspect(data.resources)))
-    io.write("   request completo: " .. vim.json.encode(data):sub(1, 900) .. "\n")
+    io.write("   full request: " .. vim.json.encode(data):sub(1, 900) .. "\n")
   elseif ev.type == "session.execution.succeeded" or ev.type == "session.execution.failed"
     or ev.type == "session.execution.interrupted" then
     state.finished = true
@@ -205,5 +205,5 @@ require("opencode-nvim.api").delete_session(session.id(), function() deleted = t
 wait(function() return deleted end, 20000)
 vim.fn.delete(workdir, "rf")
 
-io.write(string.format("\n%d falha(s)\n", failures))
+io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

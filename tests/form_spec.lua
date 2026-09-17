@@ -132,5 +132,5 @@ test("the :OpencodeQuestion command exists", function()
   assert(vim.fn.exists(":OpencodeQuestion") == 2, "missing :OpencodeQuestion")
 end)
 
-io.write(string.format("\n%d falha(s)\n", failures))
+io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

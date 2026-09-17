@@ -63,6 +63,10 @@ function M.wire()
   -- Attach the bus to the SSE stream. This is what turns the stream into
   -- rendered text, tool lines, permission popups and buffer reloads.
   event.start()
+
+  -- The log file is kept open (writes are unbuffered, so this is only about
+  -- closing the descriptor cleanly).
+  vim.api.nvim_create_autocmd("VimLeavePre", { callback = function() log.close_file() end })
 end
 
 --------------------------------------------------------------------------------
@@ -163,7 +167,8 @@ end
 ---@param opts? table
 function M.setup(opts)
   local options = cfg.setup(opts)
-  if options.reload.set_autoread and not vim.o.autoread then
+  local reload_options = type(options.reload) == "table" and options.reload or {}
+  if reload_options.set_autoread and not vim.o.autoread then
     vim.o.autoread = true
   end
 
@@ -172,8 +177,10 @@ function M.setup(opts)
   end
 
   M.define_highlights()
-  M.create_commands()
-  M.create_keymaps()
+  -- setup() is idempotent: a plugin manager that reloads the config calls it
+  -- again, and `nvim_create_user_command` raises when the name is taken.
+  if not M._setup_done then M.create_commands() end
+  M.create_keymaps() -- `vim.keymap.set` simply replaces an existing mapping
   M.wire()
   M._setup_done = true
   log.debug("setup done")
@@ -483,7 +490,7 @@ function M.setup_approval_agent()
 
   if text ~= "" and config == nil then
     require("opencode-nvim.ui.diff").text({
-      title = "cole no seu config do OpenCode",
+      title = "paste this into your OpenCode config",
       lines = vim.split(pretty_json({ agents = { [name] = approval_agent_definition() } }), "\n"),
       filetype = "json",
       width = 0.8,
@@ -498,7 +505,7 @@ function M.setup_approval_agent()
   config.agents[name] = approval_agent_definition()
 
   local ok, err = pcall(vim.fn.writefile, vim.split(pretty_json(config), "\n"), path)
-  if not ok then return fail("escrever " .. path, err) end
+  if not ok then return fail("write " .. path, err) end
   session.reset_agents()
   log.notify(string.format(
     "agent '%s' written to %s — run `opencode2 service restart` and open a new session", name, path))
@@ -557,7 +564,7 @@ function M.events()
   end
   if #lines == 0 then lines = { "(no events received yet)" } end
   require("opencode-nvim.ui.diff").text({
-    title = "opencode · eventos",
+    title = "opencode · events",
     lines = lines,
     filetype = "json",
     width = 0.9,
@@ -570,8 +577,8 @@ function M.health()
   local lines = {
     "service file: " .. info.service_file,
     "service registered: " .. tostring(info.service_exists) .. "  (pid alive: " .. tostring(info.pid_alive) .. ")",
-    "comando: " .. tostring(info.command),
-    "stream de eventos: " .. event.status(),
+    "command: " .. tostring(info.command),
+    "event stream: " .. event.status(),
     "current session: " .. tostring(session.id() or "(none)"),
     "pending permissions: " .. tostring(#permission.pending()),
     "autoread: " .. tostring(vim.o.autoread),

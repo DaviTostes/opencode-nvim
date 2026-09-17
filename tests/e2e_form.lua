@@ -99,5 +99,5 @@ require("opencode-nvim.api").delete_session(info.id, function() cleaned = true e
 wait(function() return cleaned end, 20000)
 vim.fn.delete(workdir, "rf")
 
-io.write(string.format("\n%d falha(s)\n", failures))
+io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

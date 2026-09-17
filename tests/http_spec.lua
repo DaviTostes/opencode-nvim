@@ -135,8 +135,57 @@ test("chunked response delivered incrementally", function()
       done = true
     end)
     assert(wait_for(function() return done end), "timeout")
-    assert(#chunks >= 3, "esperava chunks incrementais, veio " .. #chunks)
+    assert(#chunks >= 3, "expected incremental chunks, got " .. #chunks)
     assert(table.concat(chunks) == "hello chunked world", table.concat(chunks))
+  end)
+end)
+
+test("content-length body arriving in several writes", function()
+  -- The parser is allowed to accumulate the pieces without concatenating them
+  -- (that is the O(n²) path a large response used to take), so the body has to
+  -- come out in one piece at the end anyway.
+  local body = string.rep("ab", 300)
+  with_server(function(client)
+    client:write("HTTP/1.1 200 OK\r\nContent-Length: " .. #body .. "\r\n\r\n")
+    local parts = { body:sub(1, 100), body:sub(101, 300), body:sub(301, 500), body:sub(501) }
+    local index = 0
+    local timer = uv.new_timer()
+    timer:start(10, 15, function()
+      index = index + 1
+      if index <= #parts then
+        client:write(parts[index])
+      else
+        timer:stop()
+        timer:close()
+      end
+    end)
+  end, function(server)
+    local done, text, status = false, nil, nil
+    http.request(server, { method = "GET", path = "/big" }, function(err, code, _, got)
+      assert(err == nil, err)
+      status, text, done = code, got, true
+    end)
+    assert(wait_for(function() return done end), "timeout")
+    assert(status == 200, status)
+    assert(text == body, string.format("body mismatch: %s bytes instead of %d", tostring(text and #text), #body))
+  end)
+end)
+
+test("chunked response with bare LF terminators", function()
+  with_server(function(client)
+    client:write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+    -- Non-compliant but seen in the wild: the size line and the data are
+    -- terminated by a single LF, so a fixed CRLF skip would eat the next size.
+    client:write("2\n{}\n0\n\n")
+  end, function(server)
+    local done, text = false, nil
+    http.request(server, { method = "GET", path = "/x" }, function(err, _, _, body)
+      assert(err == nil, err)
+      text = body
+      done = true
+    end)
+    assert(wait_for(function() return done end), "timeout")
+    assert(text == "{}", text)
   end)
 end)
 
@@ -192,9 +241,9 @@ test("POST sends a JSON body", function()
   end)
   local s = { host = "127.0.0.1", port = port }
   local done = false
-  http.request(s, { method = "POST", path = "/api/session", body = { text = "oi" } }, function() done = true end)
+  http.request(s, { method = "POST", path = "/api/session", body = { text = "hi" } }, function() done = true end)
   assert(wait_for(function() return done end), "timeout")
-  assert(_G.__request:find('{"text":"oi"}', 1, true), _G.__request)
+  assert(_G.__request:find('{"text":"hi"}', 1, true), _G.__request)
   assert(_G.__request:find("Content-Length: 13", 1, true), _G.__request)
   server:close()
 end)
@@ -214,5 +263,5 @@ test("chunked response for a body-length request", function()
   end)
 end)
 
-io.write(string.format("\n%d falha(s)\n", failures))
+io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

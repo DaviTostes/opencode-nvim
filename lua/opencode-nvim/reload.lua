@@ -82,7 +82,7 @@ local function reload_file(path)
         vim.api.nvim_buf_call(bufnr, function()
           pcall(vim.cmd, "silent! checktime")
         end)
-        log.info("recarregado", util.relative(name, session.directory()))
+        log.info("reloaded", util.relative(name, session.directory()))
         vim.api.nvim_exec_autocmds("User", { pattern = "OpencodeFileReloaded", data = { bufnr = bufnr, file = name } })
         return
       end
@@ -123,7 +123,11 @@ function M.reload_all()
 end
 
 function M.on_event(ev)
-  if not cfg.get().reload.enabled then return end
+  -- `reload = false` and `reload = { enabled = false }` both mean "do nothing"
+  -- (a plain boolean used to raise "attempt to index a boolean value" here,
+  -- on every single event).
+  local options = cfg.get().reload
+  if options == false or (type(options) == "table" and not options.enabled) then return end
   if ev.type == "file.edited" or ev.type == "session.file.edited" then
     for _, path in ipairs(M.paths_from(ev.data or {})) do
       queue(path)

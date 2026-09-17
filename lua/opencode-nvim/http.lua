@@ -116,12 +116,49 @@ function Parser:_chunk()
   elseif not self.stream then
     self.body[#self.body + 1] = data
   end
-  self.buf = self.buf:sub(start + size + 2)
+  -- The data is followed by CRLF; a server that terminates the size line with
+  -- a bare LF usually terminates the data with one too, and skipping a fixed
+  -- two bytes would eat the first byte of the next chunk header.
+  local after = start + size
+  if self.buf:sub(after, after + 1) == "\r\n" then
+    self.buf = self.buf:sub(after + 2)
+  elseif self.buf:sub(after, after) == "\n" then
+    self.buf = self.buf:sub(after + 1)
+  else
+    self.buf = self.buf:sub(after + 2)
+  end
   return true
 end
 
 function Parser:feed(chunk)
   if self.done then return end
+
+  -- Fast path for a body of known length: appending every socket chunk to
+  -- `self.buf` copies the whole body received so far, which is O(n²) for a
+  -- large response (a big diff, a long history). The pieces are concatenated
+  -- once, at the end.
+  if self.state == "length" then
+    local buffered = #self.buf
+    if buffered + #chunk < self.remaining then
+      if buffered > 0 then
+        if self.on_data then
+          self.on_data(self.buf)
+        else
+          self.body[#self.body + 1] = self.buf
+        end
+        self.buf = ""
+        self.remaining = self.remaining - buffered
+      end
+      if self.on_data then
+        self.on_data(chunk)
+      else
+        self.body[#self.body + 1] = chunk
+      end
+      self.remaining = self.remaining - #chunk
+      return
+    end
+  end
+
   self.buf = self.buf .. chunk
 
   while not self.done do

@@ -66,5 +66,5 @@ test("autostart failure is reported, not a crash", function()
   assert(type(err) == "string", vim.inspect(err))
 end)
 
-io.write(string.format("\n%d falha(s)\n", failures))
+io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

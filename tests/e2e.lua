@@ -132,7 +132,7 @@ end
 
 ----------------------------------------------------------------------
 
-local ok = step("descoberta + health", function(cb)
+local ok = step("discovery + health", function(cb)
   discovery.resolve(function(err, server)
     if err then return cb(err) end
     discovery.probe(server, function(probe_err, info)
@@ -221,11 +221,11 @@ if with_tools then
     }, function(err) cb(err) end)
   end)
 
-  io.write("   aguardando permission.asked...\n")
+  io.write("   waiting for permission.asked...\n")
   if wait(function() return asked ~= nil end, 120000) then
     io.write("   permission.asked: " .. vim.inspect(asked) .. "\n")
     local request = asked
-    step("responder permitindo uma vez", function(cb)
+    step("reply allowing once", function(cb)
       api.reply_permission(tool_session, request.id, "once", nil, function(err) cb(err) end)
     end)
     if wait(function() return state.finished end, 120000) then
@@ -250,7 +250,7 @@ if with_tools then
 end
 
 -- Shapes for the history renderer.
-step("shapes das mensagens", function(cb)
+step("message shapes", function(cb)
   api.messages(text_session, { limit = 6, order = "desc" }, function(err, page)
     if err then return cb(err) end
     io.write("   envelope: " .. vim.inspect(vim.tbl_keys(page or {})) .. "\n")
@@ -279,7 +279,7 @@ local fd = io.open(dump_path, "w")
 if fd then
   fd:write(vim.json.encode(report))
   fd:close()
-  io.write("\neventos por tipo:\n")
+  io.write("\nevents by type:\n")
   local kinds = vim.tbl_keys(seen)
   table.sort(kinds)
   for _, kind in ipairs(kinds) do

@@ -14,6 +14,7 @@ local state = {
   backoff = 500,
   timer = nil,
   waiters = {},
+  waiting = false,
 }
 
 local MAX_BACKOFF = 10000
@@ -48,16 +49,26 @@ local function flush_waiters(err)
 end
 
 --- Calls `cb` once the stream is delivering events (or after `timeout`).
+---
+--- The waiters share a single poll chain: one per caller meant N chains all
+--- flushing the same list.
 ---@param cb fun(err: string?)
 function M.ensure(cb)
   if state.connected then return cb(nil) end
   state.waiters[#state.waiters + 1] = cb
   M.start()
+  if state.waiting then return end
+  state.waiting = true
   local tries = 0
   local function wait()
-    if state.connected then return end
+    -- nothing left to wait for: `emit` or `stop` already flushed them
+    if state.connected or #state.waiters == 0 then
+      state.waiting = false
+      return
+    end
     tries = tries + 1
     if tries > 40 then
+      state.waiting = false
       return flush_waiters("timeout waiting for the event stream")
     end
     vim.defer_fn(wait, 250)
@@ -143,6 +154,24 @@ function M.start(opts)
     end
 
     local buffer = ""
+
+    -- Events are dispatched in order, but a burst of them (a streaming answer
+    -- arrives as hundreds of deltas) only needs a single trip to the main loop:
+    -- one `vim.schedule` per event is one callback per token.
+    local batch, draining = {}, false
+    local function drain()
+      draining = false
+      local events = batch
+      batch = {}
+      if generation ~= state.generation then return end
+      local callback = state.on_event
+      if not callback then return end
+      for _, item in ipairs(events) do
+        if generation ~= state.generation then return end
+        pcall(callback, item)
+      end
+    end
+
     local function emit(event)
       if generation ~= state.generation then return end
       if event.type == "server.connected" and not state.connected then
@@ -151,13 +180,11 @@ function M.start(opts)
         state.backoff = 500
         flush_waiters(nil)
       end
-      local callback = state.on_event
-      if callback then
-        vim.schedule(function()
-          if generation ~= state.generation then return end
-          pcall(callback, event)
-        end)
-      end
+      if not state.on_event then return end
+      batch[#batch + 1] = event
+      if draining then return end
+      draining = true
+      vim.schedule(drain)
     end
 
     state.handle = http.stream(server, "/api/event", {

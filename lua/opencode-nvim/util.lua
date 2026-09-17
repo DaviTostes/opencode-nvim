@@ -95,7 +95,7 @@ function M.truncate_lines(lines, max, indent)
   if #lines <= max then return lines end
   local out = {}
   for i = 1, max do out[i] = lines[i] end
-  out[#out + 1] = (indent or "") .. string.format("… +%d linhas", #lines - max)
+  out[#out + 1] = (indent or "") .. string.format("… +%d lines", #lines - max)
   return out
 end
 

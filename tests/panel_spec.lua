@@ -54,7 +54,7 @@ end
 
 test("setup defines highlights and commands", function()
   assert(vim.fn.hlexists("OpencodeBorder") == 1)
-  assert(vim.fn.exists(":Opencode") == 2, "comando :Opencode ausente")
+  assert(vim.fn.exists(":Opencode") == 2, ":Opencode command missing")
   assert(vim.fn.exists(":OpencodeApprovalAgent") == 2)
   assert(vim.fn.exists(":OpencodeDoctor") == 2, "the :OpencodeDoctor command is missing")
   -- Regression: setup() must attach the event bus to the stream, otherwise the
@@ -131,6 +131,67 @@ test("ignores events from other sessions", function()
   session.current = saved
 end)
 
+test("setup() can be called twice", function()
+  -- plugin managers reload the config; a second setup must not raise
+  -- "Command 'Opencode' already exists".
+  local ok, err = pcall(plugin.setup, { server = { autostart = false } })
+  assert(ok, err)
+  assert(vim.fn.exists(":Opencode") == 2, ":Opencode command missing")
+end)
+
+test("reload = false disables the buffer reloads without breaking events", function()
+  local cfg = require("opencode-nvim.config")
+  local reload = require("opencode-nvim.reload")
+  local saved = cfg.get().reload
+  cfg.get().reload = false
+  local ok, err = pcall(reload.on_event, { type = "file.edited", data = { filePath = "/tmp/x.lua" } })
+  cfg.get().reload = saved
+  assert(ok, err)
+end)
+
+test("deferred tools are rendered in the order they were announced", function()
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  for _, item in ipairs({ { "e", "edit" }, { "d", "read" }, { "c", "grep" }, { "b", "glob" }, { "a", "list" } }) do
+    feed("session.tool.input.started", { id = item[1], name = item[2] })
+  end
+  -- nothing is rendered until the turn ends (or the tool reports)
+  settle()
+  assert(not panel_text():find("read", 1, true), "a pending tool was rendered early:\n" .. panel_text())
+  feed("session.execution.succeeded")
+  settle()
+  local text = panel_text()
+  local last = 0
+  for _, name in ipairs({ "edit", "read", "grep", "glob", "list" }) do
+    local at = text:find(name, 1, true)
+    assert(at, "missing tool " .. name .. ":\n" .. text)
+    assert(at > last, "tools out of order at " .. name .. ":\n" .. text)
+    last = at
+  end
+end)
+
+test("the buffer never drifts from the renderer", function()
+  -- Regression: removing a line (the "thinking" placeholder, the stall warning)
+  -- used to clamp the draw watermark to the new length instead of the removal
+  -- point, which left the tail of the buffer one line off.
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.tool.input.started", { id = "t1", name = "first" })
+  feed("session.tool.input.ended", { id = "t1" })
+  feed("session.tool.input.started", { id = "t2", name = "second" })
+  feed("session.tool.input.ended", { id = "t2" })
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "the answer" })
+  feed("session.text.ended", { text = "the answer" })
+  settle()
+  local text = panel_text()
+  assert(not text:find("thinking", 1, true), "the placeholder stayed behind:\n" .. text)
+  local expected = table.concat(panel.renderer().lines, "\n")
+  assert(text == expected, "buffer drifted from the renderer:\n-- buffer\n" .. text .. "\n-- renderer\n" .. expected)
+end)
+
 test("ignores catalog events", function()
   local before = panel_text()
   event.emit({ type = "plugin.updated", data = { id = "x" } })
@@ -142,11 +203,11 @@ end)
 test("renders reasoning and errors", function()
   feed("session.reasoning.delta", { delta = "thinking..." })
   feed("session.reasoning.ended", {})
-  feed("session.error", { message = "algo falhou" })
+  feed("session.error", { message = "something broke" })
   settle()
   local text = panel_text()
   assert(text:find("thinking", 1, true), text)
-  assert(text:find("algo falhou", 1, true), text)
+  assert(text:find("something broke", 1, true), text)
 end)
 
 test("clears the panel", function()
@@ -157,28 +218,28 @@ end)
 
 test("renders history messages", function()
   panel.render_messages({
-    { type = "user", text = "faz isso", time = { created = 1 } },
+    { type = "user", text = "do this", time = { created = 1 } },
     {
       type = "assistant",
       time = { created = 2 },
       content = {
-        { type = "text", text = "claro" },
+        { type = "text", text = "sure" },
         { type = "tool", name = "edit", state = { status = "completed", input = { filePath = "/tmp/h.lua" }, output = "ok" } },
       },
     },
   })
   settle()
   local text = panel_text()
-  assert(text:find("faz isso", 1, true), text)
-  assert(text:find("claro", 1, true), text)
+  assert(text:find("do this", 1, true), text)
+  assert(text:find("sure", 1, true), text)
   assert(text:find("/tmp/h.lua", 1, true), text)
 end)
 
 test("opens the diff popup with patches", function()
   local ok, err = pcall(diff.patches, {
-    title = "teste",
+    title = "test",
     patches = {
-      { file = "src/a.lua", patch = "@@ -1 +1 @@\n-velho\n+novo", additions = 1, deletions = 1, status = "modified" },
+      { file = "src/a.lua", patch = "@@ -1 +1 @@\n-old\n+new", additions = 1, deletions = 1, status = "modified" },
     },
   })
   if not ok then return report("opens the diff popup with patches", false, err) end
@@ -186,7 +247,7 @@ test("opens the diff popup with patches", function()
   local buf = vim.api.nvim_get_current_buf()
   local text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
   assert(text:find("src/a.lua", 1, true), text)
-  assert(text:find("+novo", 1, true), text)
+  assert(text:find("+new", 1, true), text)
   assert(vim.bo[buf].filetype == "diff", vim.bo[buf].filetype)
   diff.close()
 end)
@@ -667,7 +728,7 @@ end)
 test("prompt and panel are aligned and do not overlap", function()
   plugin.open()
   local pwin, iwin = panel.state.win, panel.state.input.win
-  assert(pwin and iwin, "janelas ausentes")
+  assert(pwin and iwin, "missing windows")
   local panel_conf = vim.api.nvim_win_get_config(pwin)
   local input_conf = vim.api.nvim_win_get_config(iwin)
 
@@ -760,7 +821,7 @@ test("sending keeps the prompt window and the focus", function()
   plugin.open()
   assert(panel.state.input.win ~= nil, "the prompt did not open")
   local before = panel.state.input.win
-  vim.api.nvim_buf_set_lines(panel.state.input.buf, 0, -1, false, { "pergunta de teste" })
+  vim.api.nvim_buf_set_lines(panel.state.input.buf, 0, -1, false, { "test question" })
 
   panel.submit()
   settle()
@@ -1049,5 +1110,5 @@ test("focus_after_submit honours the configured mode", function()
   plugin.close()
 end)
 
-io.write(string.format("\n%d falha(s)\n", failures))
+io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

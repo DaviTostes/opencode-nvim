@@ -81,7 +81,7 @@ function M.probe(server, cb, timeout)
   http.request(server, { method = "GET", path = "/api/health", timeout = timeout or 3000 },
     function(err, status, _, text)
       if err then return cb(err) end
-      if status ~= 200 then return cb("health respondeu " .. tostring(status)) end
+      if status ~= 200 then return cb("health responded " .. tostring(status)) end
       local info = require("opencode-nvim.util").decode(text)
       if type(info) ~= "table" then return cb("health returned invalid json") end
       cb(nil, info)

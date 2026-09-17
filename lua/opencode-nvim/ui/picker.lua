@@ -22,7 +22,7 @@ function M.pick(items, opts, on_choice)
     if success then return end
   end
 
-  vim.ui.select(items, { prompt = opts.prompt or opts.name or "escolha" }, function(choice)
+  vim.ui.select(items, { prompt = opts.prompt or opts.name or "choose" }, function(choice)
     on_choice(choice)
   end)
 end

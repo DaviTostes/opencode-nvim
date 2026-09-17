@@ -227,8 +227,11 @@ function R:remove_line(text)
     if self.lines[index] == text then
       table.remove(self.lines, index)
       table.remove(self.kinds, index)
-      self.committed = math.min(self.committed, #self.lines)
-      self.drawn = math.min(self.drawn, #self.lines)
+      -- Rewrite from the line that was removed: everything after it shifted up.
+      -- Clamping the watermarks to the new length (what this used to do) left
+      -- the tail off by one line in the buffer ("▸ thinking…" reappearing and
+      -- the last line duplicated or lost).
+      self:rewind(index)
       self:draw()
       return true
     end
@@ -341,7 +344,12 @@ function R:tool_args(id, chunk)
   local tool = self.tools[id]
   if not tool then return end
   tool.args = tool.args .. (chunk or "")
-  self:tool_update(id, { summary = summarize_args(tool.args) })
+  -- The arguments stream in small pieces and most of them do not change the
+  -- one-line summary (partial JSON does not even parse): drawing on every piece
+  -- is what this guard avoids.
+  local summary = summarize_args(tool.args)
+  if summary == tool.summary then return end
+  self:tool_update(id, { summary = summary })
 end
 
 function R:tool_called(id, name, args)

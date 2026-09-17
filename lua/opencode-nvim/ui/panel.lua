@@ -67,7 +67,9 @@ local state = {
   session_id = nil,
   thinking = false,
   reasoning_open = false,
+  reasoning_text = nil,
   pending_tools = {},
+  pending_order = {},
   stall_text = nil,
   running_since = nil,
   warned_slow = false,
@@ -75,7 +77,6 @@ local state = {
   input = {
     buf = nil,
     win = nil,
-    saved_win = nil,
     target = nil,
     selection = nil,
     history = {},
@@ -96,7 +97,13 @@ M.state = state
 function M.scroll_to_bottom()
   local win = state.win
   if not (win and vim.api.nvim_win_is_valid(win)) then return end
+  if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return end
   local last = vim.api.nvim_buf_line_count(state.buf)
+  -- Fast path: the cursor is on the last line and the view already shows it.
+  -- Drawing a tool header or replacing a line calls this with no new line to
+  -- reveal, and the `winrestview` below is an Ex command (the expensive part).
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  if cursor[1] >= last and vim.fn.line("w$", win) >= last then return end
   -- Moving another window's cursor is invisible to the mode and works without
   -- focus, so this runs always: the panel keeps following while you type.
   pcall(vim.api.nvim_win_set_cursor, win, { last, 0 })
@@ -146,6 +153,14 @@ end
 local function err_text(err)
   if type(err) == "table" then return err.message or vim.inspect(err) end
   return tostring(err)
+end
+
+--- Whether tool bodies are shown in the panel (`ui.panel.tool_output`).
+---
+--- An edit tool prints its patch as its body, so this is the switch that keeps
+--- changes out of the conversation.
+local function tool_output_enabled()
+  return (cfg.get().ui.panel or {}).tool_output ~= false
 end
 
 local function panel_geometry()
@@ -254,9 +269,15 @@ local function flush_tool(renderer, id, name, args)
   end
 end
 
+--- Flushes every deferred tool, in the order they were announced.
+---
+--- `pairs` over the table itself rendered them in a different order from run to
+--- run (several tools can be pending at the end of a turn).
 local function flush_all_tools(renderer)
-  for id in pairs(state.pending_tools) do
-    flush_tool(renderer, id)
+  local order = state.pending_order or {}
+  state.pending_order = {}
+  for _, id in ipairs(order) do
+    if state.pending_tools[id] then flush_tool(renderer, id) end
   end
 end
 
@@ -342,7 +363,6 @@ end
 --- instead of overlapping.
 local function panel_config()
   local width, height = panel_geometry()
-  state.geom = { width, height }
   local lift = 0
   if input_open() then
     -- The prompt is `input_height` rows plus its two border rows; +2 puts the
@@ -370,6 +390,19 @@ end
 
 function M.update_title()
   if not (state.win and vim.api.nvim_win_is_valid(state.win)) then return end
+  -- Change detection: this runs on every event of a running turn and
+  -- `nvim_win_set_config` re-lays out the float every single time.
+  local width, height = panel_geometry()
+  local signature = table.concat({
+    M.title(),
+    tostring(width),
+    tostring(height),
+    tostring(input_open() and M.input_height() or 0),
+    tostring(vim.o.columns),
+    tostring(vim.o.lines),
+  }, "|")
+  if state.title_signature == signature then return end
+  state.title_signature = signature
   pcall(vim.api.nvim_win_set_config, state.win, panel_config())
 end
 
@@ -437,6 +470,7 @@ local function ensure_win()
   vim.wo[state.win].signcolumn = "no"
   vim.wo[state.win].foldcolumn = "0"
   vim.wo[state.win].winhighlight = "Normal:OpencodeNormal,FloatBorder:OpencodeBorder,FloatTitle:OpencodeTitle"
+  state.title_signature = nil
   if (cfg.get().ui.panel or {}).folds ~= false then
     -- Manual folds: `fold_reasoning` creates one per reasoning block when the
     -- block ends (zo opens, zR opens all).
@@ -477,6 +511,7 @@ function M.close()
     pcall(vim.api.nvim_win_close, state.win, true)
   end
   state.win = nil
+  state.title_signature = nil
 end
 
 --- Show or hide the panel. Showing it never moves the cursor and never opens
@@ -638,10 +673,20 @@ function M.update_input_win()
     zindex = 60,
   }
 
+  -- The prompt is reconfigured from `TextChangedI` (every keystroke): only do
+  -- the work when the geometry actually changed. The height follows the number
+  -- of lines in the buffer, which is part of the signature.
+  local signature = string.format("%d|%d|%d|%d|%s",
+    width, config.height, vim.o.columns, vim.o.lines, ui.border or "rounded")
+
   if state.input.win and vim.api.nvim_win_is_valid(state.input.win) then
-    pcall(vim.api.nvim_win_set_config, state.input.win, config)
+    if state.input.signature ~= signature then
+      state.input.signature = signature
+      pcall(vim.api.nvim_win_set_config, state.input.win, config)
+    end
   else
     state.input.win = vim.api.nvim_open_win(state.input.buf, true, config)
+    state.input.signature = signature
     vim.wo[state.input.win].wrap = true
     vim.wo[state.input.win].linebreak = true
     vim.wo[state.input.win].winhighlight = "Normal:OpencodeNormal,FloatBorder:OpencodeBorder,FloatTitle:OpencodeTitle"
@@ -680,7 +725,6 @@ function M.open_input(prefill, selection, fresh)
   -- reusing the previous selection or the `'<`/`'>` marks made old selections
   -- leak into prompts that did not ask for one.
   state.input.selection = selection
-  state.input.saved_win = vim.api.nvim_get_current_win()
   if fresh then
     state.input.index = 0
     state.input.draft = ""
@@ -723,13 +767,13 @@ end
 
 function M.close_input()
   local win = state.input.win
-  local was_current = win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_get_current_win() == win
-  if was_current then
-    pcall(vim.api.nvim_win_close, win, true)
-  elseif win and vim.api.nvim_win_is_valid(win) then
+  local was_current = win ~= nil and vim.api.nvim_win_is_valid(win)
+    and vim.api.nvim_get_current_win() == win
+  if win and vim.api.nvim_win_is_valid(win) then
     pcall(vim.api.nvim_win_close, win, true)
   end
   state.input.win = nil
+  state.input.signature = nil
   -- Closing the window you were inserting in must not leave the insert mode
   -- behind in whatever window Neovim focuses next (that is how the cursor ended
   -- up typing in the panel).
@@ -934,11 +978,11 @@ function M.clear()
   -- swallow the next turn's placeholder and a stale tool would never render.
   state.input.index = 0
   state.input.draft = ""
-  state.reasoning_text = nil
   state.thinking = false
   state.reasoning_text = nil
   state.reasoning_open = false
   state.pending_tools = {}
+  state.pending_order = {}
   state.stall_text = nil
   M.renderer():clear()
 end
@@ -1005,7 +1049,9 @@ function M.render_messages(messages)
           if args then renderer:tool_called(id, item.name or item.tool, args) end
           local status = tool_state.status
           if status == "completed" or status == "error" or status == "failed" then
-            renderer:tool_end(id, status ~= "error" and status ~= "failed", content_output(tool_state))
+            local body = content_output(tool_state)
+            if not tool_output_enabled() then body = nil end
+            renderer:tool_end(id, status ~= "error" and status ~= "failed", body)
           end
         end
       end
@@ -1050,8 +1096,10 @@ function M.on_session(info)
   if fresh then return end -- a fresh session has no history; keep what is on screen
 
   state.thinking = false
+  state.reasoning_text = nil
   state.reasoning_open = false
   state.pending_tools = {}
+  state.pending_order = {}
   state.stall_text = nil
   M.renderer():clear()
   M.load_history()
@@ -1085,17 +1133,16 @@ local function tool_output(data)
   return util.pick_string(data, { "output", "text", "result", "error", "message" })
 end
 
+--- Body of a tool result, honouring `ui.panel.tool_output`.
+local function tool_body(data)
+  if not tool_output_enabled() then return nil end
+  return tool_output(data)
+end
+
 --- Only events of the session the panel is showing are rendered.
 ---
 --- This used to accept everything while there was no session yet, which meant a
 --- TUI session running in another terminal streamed its text into this panel.
---- Body of a tool result, honouring `ui.panel.tool_output` (an edit tool prints
---- its patch as its body, so this is what hides diffs from the panel).
-local function tool_body(data)
-  if (cfg.get().ui.panel or {}).tool_output == false then return nil end
-  return tool_output(data)
-end
-
 local function belongs_here(data)
   local current = session.id()
   if not current then return false end
@@ -1203,7 +1250,11 @@ function M.on_event(ev)
   elseif kind == "session.tool.input.started" then
     -- Deferred: rendering now would split the reasoning around the call.
     clear_stall(renderer)
-    state.pending_tools[tool_id(data) or "tool"] = { name = tool_name(data), args = "" }
+    local id = tool_id(data) or "tool"
+    if not state.pending_tools[id] then
+      state.pending_order[#state.pending_order + 1] = id
+    end
+    state.pending_tools[id] = { name = tool_name(data), args = "" }
   elseif kind == "session.tool.input.delta" then
     local pending = state.pending_tools[tool_id(data) or "tool"]
     if pending then pending.args = (pending.args or "") .. (event_text(data) or "") end
@@ -1288,7 +1339,10 @@ function M.on_event(ev)
     M.update_title()
   elseif kind == "session.usage.updated" or kind == "session.updated"
     or kind == "session.model.selected" or kind == "session.agent.selected" then
+    -- Only the title changed: nothing was appended, so there is no view to
+    -- follow (this branch runs several times per second while a turn streams).
     M.update_title()
+    return
   end
 
   M.scroll_soon()

@@ -48,6 +48,22 @@ local function relevant_patches(patches, resources)
   return out
 end
 
+--- True when the request is already being shown, queued or deferred.
+---
+--- The same request arrives twice easily (the `permission.asked` event and the
+--- `M.sync` sweep when a session is attached), and two dialogs for one decision
+--- is one dialog too many.
+local function known(id)
+  if active and active.id == id then return true end
+  for _, request in ipairs(queue) do
+    if request.id == id then return true end
+  end
+  for _, request in ipairs(deferred) do
+    if request.id == id then return true end
+  end
+  return false
+end
+
 local function reply(request, decision, message)
   active = nil
   api.reply_permission(session.id(), request.id, decision, message, function(err)
@@ -257,7 +273,7 @@ function M.on_event(ev)
       log.debug("ignoring permission from another session", tostring(request.sessionID))
       return
     end
-    if active and active.id == request.id then return end
+    if known(request.id) then return end
     queue[#queue + 1] = request
     M.next()
   elseif ev.type == "permission.replied" or ev.type == "permission.rejected" then
@@ -286,7 +302,7 @@ function M.sync(cb)
   api.permissions(session.id(), function(err, requests)
     if not err and type(requests) == "table" then
       for _, request in ipairs(requests) do
-        if request.id and not (active and active.id == request.id) then
+        if request.id and not known(request.id) then
           queue[#queue + 1] = request
         end
       end
