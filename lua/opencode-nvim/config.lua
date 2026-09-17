@@ -74,6 +74,8 @@ M.defaults = {
     interrupt = "<leader>tx",
     undo = "<leader>tu",
     events = "<leader>te",
+    actions = "<leader>tc",
+    edit = "<leader>ti",
   },
   log = { level = "warn", file = nil },
 }

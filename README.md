@@ -44,6 +44,27 @@ require("opencode-nvim").setup({})
 If `setup()` is never called the plugin configures itself with the defaults on
 `VimEnter`.
 
+## Daily use
+
+Four flows cover almost everything:
+
+| I want to... | Do this |
+| --- | --- |
+| ask about the code in front of me | select it (or not) and `<leader>ta`, type, `<CR>` |
+| run a common action | `<leader>tc` and pick: explain this code, find bugs here, write tests, refactor this, document this, explain this file, review my changes, commit message |
+| ask for an **edit** | select the code and `<leader>ti`, describe the change, then approve the diff with `<CR>` |
+| review what the AI did | `gd` in the panel (or `:OpencodeDiff`); `r` in that popup undoes the turn |
+
+You do **not** have to type `@this`: with `context.auto = true` (default) every
+prompt carries a compact header — `[editor context] file=... cursor=...` plus
+the selected code, the filetype, `modified=true` and the diagnostics count — so
+"look at this file" or "is this right?" work with the file you are looking at.
+Typing a placeholder (`@this`, `@diff`, ...) instead skips the automatic part.
+
+A typical edit loop: put the cursor on the function, `<leader>ti`, type "make it
+accept a callback", `<CR>`, the diff popup appears, `<CR>` approves, the buffer
+reloads keeping your cursor, and `u` still undoes it if you change your mind.
+
 ## Usage
 
 | Keymap | Action |
@@ -57,6 +78,8 @@ If `setup()` is never called the plugin configures itself with the defaults on
 | `<leader>td` | diff of the last turn |
 | `<leader>tx` | interrupt |
 | `<leader>tu` | undo the last turn |
+| `<leader>tc` | pick a ready-made action |
+| `<leader>ti` | edit this (selection or file) with an instruction |
 
 In the panel: `i`/`a`/`<CR>` opens the prompt, `q`/`<Esc>` closes it, `<C-c>`
 interrupts, `gd` shows the diff, `r` resends the last prompt (handy when the
@@ -98,6 +121,8 @@ Commands:
 :OpencodeInterrupt      interrupt the running turn
 :OpencodeUndo           undo the last turn
 :OpencodeDiff           diff of the last turn
+:OpencodeActions        pick a ready-made action
+:OpencodeEdit           ask for a change in the selection
 :OpencodeApproval       in-editor approval status
 :OpencodeApprovalAgent  create the approval agent in the OpenCode config
 :OpencodePermissions    decide permissions left for later

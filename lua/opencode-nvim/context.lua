@@ -131,6 +131,39 @@ local function fmt_diff(opts)
   return "```diff\n" .. table.concat(lines, "\n") .. "\n```"
 end
 
+--- Compact one-line description of what the editor is looking at.
+---
+--- This is what makes a plain sentence like "look at this file" work: the model
+--- is told which file, where the cursor is and what is selected, without the
+--- user having to type a placeholder.
+---@param opts? { bufnr?: integer, selection?: table, range?: table, directory?: string, line?: integer }
+---@return string?
+function M.header(opts)
+  opts = opts or {}
+  local bufnr = target_buf(opts)
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  if name == "" then return nil end
+
+  local label = util.relative(name, directory(opts))
+  local parts = { string.format("file=%s", label) }
+  if vim.bo[bufnr].filetype ~= "" then parts[#parts + 1] = "lang=" .. vim.bo[bufnr].filetype end
+
+  local first, last = range_of(opts)
+  if first then
+    if first == last then
+      parts[#parts + 1] = string.format("cursor=%d", first)
+    else
+      parts[#parts + 1] = string.format("selection=%d-%d", first, last)
+    end
+  end
+  if vim.bo[bufnr].modified then parts[#parts + 1] = "modified=true" end
+
+  local diagnostics = vim.diagnostic.get(bufnr)
+  if #diagnostics > 0 then parts[#parts + 1] = string.format("diagnostics=%d", #diagnostics) end
+
+  return "[editor context] " .. table.concat(parts, " ")
+end
+
 --- Expand placeholders in `text`.
 ---@param text string
 ---@param opts? { bufnr?: integer, selection?: table, range?: table, directory?: string }
@@ -139,6 +172,20 @@ end
 function M.expand(text, opts)
   opts = opts or {}
   local files = {}
+
+  -- With `context.auto` a plain sentence carries the editor context, so the
+  -- model knows which file/selection "this" means. Explicit placeholders win.
+  local explicit = text:find("@%w+") ~= nil
+  if cfg.get().context.auto and not explicit then
+    local parts = {}
+    local header = M.header(opts)
+    if header then parts[#parts + 1] = header end
+    local first = range_of(opts)
+    if first then parts[#parts + 1] = fmt_this(opts) end
+    if #parts > 0 then
+      text = table.concat(parts, "\n") .. "\n\n" .. text
+    end
+  end
 
   local expanded = text:gsub("@(%w+)", function(name)
     if name == "this" then

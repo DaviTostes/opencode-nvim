@@ -7,6 +7,7 @@ CONTENTS					*opencode-nvim-contents*
   2. Requirements ............................... |opencode-nvim-requirements|
   3. Install ..................................... |opencode-nvim-install|
   4. Configuration ............................... |opencode-nvim-config|
+  4b. Daily use ................................. |opencode-nvim-daily|
   5. Commands .................................... |opencode-nvim-commands|
   6. Keymaps ..................................... |opencode-nvim-keymaps|
   7. Context (@this, @buffer, ...) ............... |opencode-nvim-context|
@@ -121,6 +122,34 @@ Without calling `setup()` the plugin configures itself with the defaults on
 <
 
 ==============================================================================
+4b. Daily use					*opencode-nvim-daily*
+
+Four flows cover almost everything: >
+
+  ask about the code in front of you
+	select it (or not) and press <leader>ta, type, <CR>
+  run a common action
+	<leader>tc and pick: explain this code, find bugs here, write tests,
+	refactor this, document this, explain this file, review my changes,
+	commit message
+  ask for an edit
+	select the code and <leader>ti, describe the change, approve the diff
+	with <CR>
+  review what the AI did
+	gd in the panel (or :OpencodeDiff); r in that popup undoes the turn
+<
+
+You do not have to type `@this`: with `context.auto = true` (default) every
+prompt carries a compact header (`[editor context] file=... cursor=...`) plus
+the selected code, the filetype, `modified=true` and the diagnostics count, so
+"look at this file" works with the file you are looking at. Typing a
+placeholder instead skips the automatic part.
+
+A typical edit loop: put the cursor on the function, <leader>ti, type "make it
+accept a callback", <CR>, the diff popup appears, <CR> approves, the buffer
+reloads keeping your cursor, and `u` still undoes it.
+
+==============================================================================
 5. Commands					*opencode-nvim-commands*
 
 :Opencode					*:Opencode*
@@ -143,6 +172,11 @@ Without calling `setup()` the plugin configures itself with the defaults on
 	Undo the last turn (revert) and restore the files.
 :OpencodeDiff					*:OpencodeDiff*
 	Show the diff of the last turn (or of the working tree).
+:OpencodeActions				*:OpencodeActions*
+	Pick a ready-made action and pre-fill the prompt with it.
+:OpencodeEdit					*:OpencodeEdit*
+	Ask for a change in the current selection (or file), through the
+	normal approval flow.
 :OpencodeApproval				*:OpencodeApproval*
 	Show which agents ask for approval and how the setup looks.
 :OpencodeApprovalAgent				*:OpencodeApprovalAgent*
@@ -172,6 +206,8 @@ Without calling `setup()` the plugin configures itself with the defaults on
   <leader>tx	interrupt
   <leader>tu	undo the last turn
   <leader>te	events
+  <leader>tc	pick a ready-made action
+  <leader>ti	edit this (selection or file) with an instruction
 
 Inside the panel:
   i, a, <CR>	open the prompt

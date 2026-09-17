@@ -89,6 +89,8 @@ function M.create_commands()
   command("OpencodeApproval", function() M.approval_status() end, { desc = "in-editor approval status" })
   command("OpencodeApprovalAgent", function() M.setup_approval_agent() end, { desc = "create the approval agent in the OpenCode config" })
   command("OpencodeDiff", function() M.diff() end, { desc = "diff of the last turn" })
+  command("OpencodeActions", function() M.choose_action() end, { desc = "pick a ready-made action" })
+  command("OpencodeEdit", function() M.edit_this() end, { desc = "ask for a change in the current selection" })
   command("OpencodePermissions", function() permission.select() end, { desc = "pending permissions" })
   command("OpencodeEvents", function() M.events() end, { desc = "events received from the server" })
   command("OpencodeHealth", function() M.health() end, { desc = "check the connection to opencode" })
@@ -133,6 +135,16 @@ function M.create_keymaps()
   map("n", keys.interrupt, function() M.interrupt() end, "interrupt")
   map("n", keys.undo, function() M.undo() end, "undo turn")
   map({ "n", "x" }, keys.events, function() M.events() end, "events")
+  map({ "n", "x" }, keys.actions, function() M.choose_action() end, "pick an action")
+  map({ "n", "x" }, keys.edit, function()
+    if vim.fn.mode():find("[vV\22]") then
+      local first, last = vim.fn.line("v"), vim.fn.line(".")
+      if first > last then first, last = last, first end
+      M.edit_this({ bufnr = vim.api.nvim_get_current_buf(), first = first, last = last })
+    else
+      M.edit_this()
+    end
+  end, "edit this with an instruction")
 end
 
 --------------------------------------------------------------------------------
@@ -210,6 +222,40 @@ function M.new_session()
   session.new({}, function(err)
     if err then return fail("new session", err) end
   end)
+end
+
+--- Ready-made instructions, so daily actions are one pick away.
+M.actions = {
+  { label = "explain this code", prompt = "@this\n\nExplain what this code does, briefly." },
+  { label = "find bugs here", prompt = "@this\n\nFind bugs, edge cases or risky assumptions in the code above." },
+  { label = "write tests", prompt = "@this\n\nWrite tests for the code above." },
+  { label = "refactor this", prompt = "@this\n\nRefactor the code above for clarity, keeping the behaviour identical." },
+  { label = "document this", prompt = "@this\n\nAdd comments/documentation to the code above." },
+  { label = "explain this file", prompt = "@buffer\n\nExplain what this file does and how it fits the project." },
+  { label = "review my changes", prompt = "@diff\n\nReview the changes above and point out problems." },
+  { label = "commit message", prompt = "@diff\n\nSuggest a commit message for the changes above." },
+}
+
+--- Pick a ready-made action and pre-fill the prompt with it.
+function M.choose_action()
+  M._autosetup()
+  local labels = {}
+  for _, action in ipairs(M.actions) do labels[#labels + 1] = action.label end
+  picker.pick(labels, { name = "opencode actions" }, function(choice)
+    if not choice then return end
+    for _, action in ipairs(M.actions) do
+      if action.label == choice then
+        return M.ask(action.prompt .. "\n")
+      end
+    end
+  end)
+end
+
+--- Ask for a change in the code you are looking at. Goes through the normal
+--- approval flow, so nothing is written before you see the diff.
+function M.edit_this(selection)
+  M._autosetup()
+  M.ask("@this\n\nEdit the code above as follows: ", selection)
 end
 
 function M.select_session()

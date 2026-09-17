@@ -245,6 +245,56 @@ test("resolve_model falls back to the TUI preferred model", function()
   assert(known and known.id == "b" and known.variant == "v", vim.inspect(known))
 end)
 
+test("context.auto tells the model what 'this' means", function()
+  local cfg = require("opencode-nvim.config")
+  local context = require("opencode-nvim.context")
+
+  -- a named buffer with a filetype and a cursor
+  local buf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(buf, vim.fs.joinpath(vim.uv.cwd(), "exemplo.lua"))
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "local x = 1", "local y = 2", "print(x + y)" })
+  vim.bo[buf].filetype = "lua"
+
+  local text = context.expand("look at this", { bufnr = buf, line = 2 })
+  assert(text:find("[editor context]", 1, true), text)
+  assert(text:find("file=exemplo.lua", 1, true), text)
+  assert(text:find("lang=lua", 1, true), text)
+  assert(text:find("cursor=2", 1, true), text)
+  assert(text:find("look at this", 1, true), text)
+
+  -- with a selection the code itself goes along
+  local selected = context.expand("what about this?", {
+    bufnr = buf,
+    selection = { bufnr = buf, first = 1, last = 2 },
+  })
+  assert(selected:find("selection=1-2", 1, true), selected)
+  assert(selected:find("local x = 1", 1, true), selected)
+
+  -- an explicit placeholder wins over the automatic header
+  local explicit = context.expand("@this", { bufnr = buf, line = 1 })
+  assert(not explicit:find("[editor context]", 1, true), explicit)
+  assert(explicit:find("local x = 1", 1, true), explicit)
+
+  -- and it can be turned off
+  cfg.get().context.auto = false
+  local plain = context.expand("look at this", { bufnr = buf, line = 2 })
+  assert(not plain:find("[editor context]", 1, true), plain)
+  cfg.get().context.auto = true
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test("actions are one pick away", function()
+  assert(vim.fn.exists(":OpencodeActions") == 2)
+  assert(vim.fn.exists(":OpencodeEdit") == 2)
+  assert(type(plugin.actions) == "table" and #plugin.actions >= 5, vim.inspect(plugin.actions))
+  local labels = {}
+  for _, action in ipairs(plugin.actions) do
+    labels[action.label] = true
+    assert(type(action.prompt) == "string" and action.prompt ~= "", vim.inspect(action))
+  end
+  assert(labels["review my changes"] and labels["write tests"], vim.inspect(labels))
+end)
+
 test("reasoning gets a header, a gutter and a fold", function()
   plugin.open({ input = false }) -- folds need a window
   plugin.clear()
