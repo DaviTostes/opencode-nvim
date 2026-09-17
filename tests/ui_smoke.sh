@@ -15,7 +15,13 @@ cleanup() { tmux kill-session -t "$SESSION" 2>/dev/null; }
 trap cleanup EXIT
 
 tmux new-session -d -s "$SESSION" -x 160 -y 45
-tmux send-keys -t "$SESSION" "nvim -u NONE --cmd 'set rtp+=$ROOT' -c 'luafile $ROOT/tests/ui_smoke.lua'" Enter
+# UI_SMOKE_USER_CONFIG=1 runs with the user's own Neovim config (useful to check
+# that the config itself does not pin a focus-stealing combination).
+if [ "${UI_SMOKE_USER_CONFIG:-0}" = "1" ]; then
+  tmux send-keys -t "$SESSION" "nvim -c 'luafile $ROOT/tests/ui_smoke.lua'" Enter
+else
+  tmux send-keys -t "$SESSION" "nvim -u NONE --cmd 'set rtp+=$ROOT' -c 'luafile $ROOT/tests/ui_smoke.lua'" Enter
+fi
 sleep 3
 
 for _ in $(seq 1 20); do

@@ -730,9 +730,16 @@ function M.doctor()
   end)
 
   job(function(cb)
-    local approval = cfg.get().approval or {}
+    local options = cfg.get()
+    local approval = options.approval or {}
+    local ui = options.ui or {}
     cb(string.format("config: agent=%s  approval.agent=%s  review=%s  autoread=%s",
-      tostring(cfg.get().agent), tostring(approval.agent), tostring(approval.review), tostring(vim.o.autoread)))
+      tostring(options.agent), tostring(approval.agent), tostring(approval.review), tostring(vim.o.autoread)))
+    -- focus-related settings: a config pinning these is the usual reason for
+    -- "it keeps moving my cursor" (see the focus values below)
+    lines[#lines + 1] = string.format("focus: open=%s  after_submit=%s  escape=%s  keymaps=%s",
+      tostring(ui.focus_on_open), tostring(ui.focus_after_submit), tostring(ui.escape_closes),
+      tostring((options.keymaps or {}).enabled))
   end)
 
   -- Never leave the user without an answer, even if a probe hangs.
