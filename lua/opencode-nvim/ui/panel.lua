@@ -348,6 +348,8 @@ function M.ensure_buf()
   vim.bo[buf].filetype = "markdown"
   vim.bo[buf].bufhidden = "hide"
   vim.bo[buf].swapfile = false
+  -- Display only: the renderer unlocks it while writing.
+  vim.bo[buf].modifiable = false
   state.buf = buf
   state.renderer = Renderer.new(buf)
   -- Following the end is decided from the window view while drawing, never from
@@ -961,6 +963,8 @@ end
 --- events (`plugin.updated`, `catalog.updated`, ...) cost nothing.
 local HANDLED = {
   ["opencode.session.changed"] = true,
+  ["opencode.form.created"] = true,
+  ["opencode.form.replied"] = true,
   ["server.connected"] = true,
   ["session.text.started"] = true,
   ["session.text.delta"] = true,
@@ -996,6 +1000,25 @@ function M.on_event(ev)
   if not HANDLED[kind] then return end
   if kind == "opencode.session.changed" then
     return M.on_session(data)
+  end
+  if kind == "opencode.form.created" then
+    local renderer = M.renderer()
+    renderer:note(string.format("? %s", tostring(data.title or "question")), "note")
+    for _, field in ipairs(data.fields or {}) do
+      local question = field.description or field.title
+      if question then renderer:note("  " .. question, "note") end
+    end
+    M.scroll_soon()
+    return
+  end
+  if kind == "opencode.form.replied" then
+    local parts = {}
+    for key, value in pairs(data.answer or {}) do
+      parts[#parts + 1] = string.format("%s=%s", key, type(value) == "table" and table.concat(value, ", ") or tostring(value))
+    end
+    M.renderer():note("  answered " .. table.concat(parts, " "), "meta")
+    M.scroll_soon()
+    return
   end
   -- `server.connected` carries no session: it only refreshes the title.
   if kind == "server.connected" then

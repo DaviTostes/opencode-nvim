@@ -2,6 +2,7 @@ local api = require("opencode-nvim.api")
 local cfg = require("opencode-nvim.config")
 local discovery = require("opencode-nvim.discovery")
 local event = require("opencode-nvim.event")
+local form = require("opencode-nvim.form")
 local log = require("opencode-nvim.log")
 local panel = require("opencode-nvim.ui.panel")
 local permission = require("opencode-nvim.permission")
@@ -50,9 +51,14 @@ function M.wire()
   event.on_any(function(ev)
     panel.on_event(ev)
     permission.on_event(ev)
+    form.on_event(ev)
     reload.on_event(ev)
     session.on_event(ev)
   end)
+
+  -- Pick up questions that were already pending (attaching, or a missed event).
+  event.on("opencode.session.changed", function() form.sync() end)
+  event.on("session.idle", function() form.sync() end)
 
   -- Attach the bus to the SSE stream. This is what turns the stream into
   -- rendered text, tool lines, permission popups and buffer reloads.
@@ -95,6 +101,10 @@ function M.create_commands()
     M.edit_this(M.range_from_args(args))
   end, { range = true, desc = "ask for a change in the selection (or file)" })
   command("OpencodePermissions", function() permission.select() end, { desc = "pending permissions" })
+  command("OpencodeQuestion", function() form.sync(function(err)
+    if err then return fail("question", err) end
+    if #form.pending() == 0 then log.notify("no pending question") end
+  end) end, { desc = "show the question waiting for an answer" })
   command("OpencodeEvents", function() M.events() end, { desc = "events received from the server" })
   command("OpencodeHealth", function() M.health() end, { desc = "check the connection to opencode" })
   command("OpencodeClose", function() M.close() end, { desc = "close the panel" })
@@ -684,7 +694,8 @@ function M.doctor()
   end)
 
   job(function(cb)
-    cb(string.format("pending permissions: %d", #permission.pending()))
+    cb(string.format("pending permissions: %d  pending questions: %d",
+      #permission.pending(), #form.pending()))
   end)
 
   job(function(cb)

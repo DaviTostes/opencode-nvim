@@ -181,6 +181,40 @@ function M.reply_permission(id, request_id, decision, message, cb)
 end
 
 --------------------------------------------------------------------------------
+-- Forms (the `question` tool asks through these)
+--------------------------------------------------------------------------------
+
+function M.session_forms(id, cb)
+  data({ method = "GET", path = "/api/session/" .. id .. "/form" }, cb)
+end
+
+function M.pending_forms(cb)
+  data({ method = "GET", path = "/api/form/request" }, cb)
+end
+
+---@param answer table<string, string|number|boolean|string[]>
+function M.reply_form(id, form_id, answer, cb)
+  data({
+    method = "POST",
+    path = "/api/session/" .. id .. "/form/" .. form_id .. "/reply",
+    body = { answer = answer },
+    timeout = 15000,
+  }, function(err, decoded)
+    if cb then cb(err, decoded) end
+  end)
+end
+
+function M.cancel_form(id, form_id, cb)
+  data({
+    method = "POST",
+    path = "/api/session/" .. id .. "/form/" .. form_id .. "/cancel",
+    timeout = 15000,
+  }, function(err, decoded)
+    if cb then cb(err, decoded) end
+  end)
+end
+
+--------------------------------------------------------------------------------
 -- Catalogues
 --------------------------------------------------------------------------------
 

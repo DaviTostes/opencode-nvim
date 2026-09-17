@@ -4,6 +4,7 @@ Drive OpenCode from Neovim. The panel floats bottom-right and **does not steal
 focus**: answers stream while you keep editing.
 
 - Streaming text, reasoning and tool calls
+- Questions from the agent show up as a picker you answer with one key
 - Edits via a diff you approve in Neovim
 - Changed buffers reload on their own, keeping the cursor
 - Prompts carry editor context (file, cursor, selection, diagnostics)
@@ -83,6 +84,7 @@ require("opencode-nvim").setup({
 | `:OpencodeApproval` | in-editor approval status |
 | `:OpencodeApprovalAgent` | create the approval agent in the OpenCode config |
 | `:OpencodePermissions` | decide permissions you left for later |
+| `:OpencodeQuestion` | show the question waiting for an answer |
 | `:OpencodeDoctor` | diagnose a turn that never answers |
 | `:OpencodeHealth` / `:OpencodeEvents` / `:OpencodeLog` | connection, event log, log level |
 
@@ -104,6 +106,11 @@ require("opencode-nvim").setup({
   find bugs here, write tests, refactor this, document this, explain this file,
   review my changes, commit message. It pre-fills the prompt so you can edit it
   before sending.
+- **Questions.** When the agent needs a decision (the `question` tool) the
+  panel shows it and a popup lists the options: a digit (or `<CR>` on the line)
+  picks one, `o` types a custom answer, `<Esc>` leaves it for later
+  (`:OpencodeQuestion` brings it back). The answer goes back to the agent and the
+  turn continues; the question and what you chose stay in the transcript.
 - **Review a turn.** When a turn touches files you just get a notification
   (`2 file(s) changed ...`) — nothing steals your focus. `:OpencodeDiff` opens
   the diff when you want it; `u` inside that popup undoes the whole turn (files
@@ -180,6 +187,7 @@ Everything (options, commands, events, Lua API, the V2 beta workarounds) is in
 make test           # HTTP + SSE + UI + discovery against a fake server (no tokens)
 make e2e            # real protocol: text streaming (one tiny prompt)
 make e2e-panel      # real interactive flow through the panel (one prompt)
+make e2e-form       # real question flow: the agent asks, the popup answers
 make e2e-approval   # real approval flow: permission popup + revert (one prompt)
 make probe          # config/agents/permissions probe (no tokens)
 make probe-hang     # what the server does during a turn that never answers

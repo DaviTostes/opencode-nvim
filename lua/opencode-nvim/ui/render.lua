@@ -54,6 +54,11 @@ end
 --- finalized before it ran.
 function R:draw()
   if not self:valid() then return end
+  -- The panel is display-only: this is the only place that unlocks it (the
+  -- buffer is created locked so a stray insert mode or `dd` cannot corrupt the
+  -- conversation).
+  local locked = not vim.bo[self.buf].modifiable
+  if locked then vim.bo[self.buf].modifiable = true end
   -- The panel reads the window view here: whether to follow the end must be
   -- decided *before* the lines change, and never by a sticky flag (moving the
   -- cursor programmatically, e.g. when folding, used to turn it off).
@@ -81,6 +86,7 @@ function R:draw()
   end
   self.marked = #self.lines
   self.drawn = #self.lines
+  if locked then vim.bo[self.buf].modifiable = false end
   if self.on_after_draw then pcall(self.on_after_draw) end
 end
 

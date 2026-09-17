@@ -6,6 +6,7 @@ test:
 	$(NVIM) -l tests/discovery_spec.lua
 	$(NVIM) -l tests/http_spec.lua
 	$(NVIM) -l tests/sse_spec.lua
+	$(NVIM) -l tests/form_spec.lua
 	$(NVIM) -l tests/panel_spec.lua
 
 e2e:
@@ -16,6 +17,9 @@ e2e-approval:
 
 probe:
 	$(NVIM) -l tests/probe_permissions.lua
+
+e2e-form:
+	$(NVIM) -l tests/e2e_form.lua
 
 probe-hang:
 	PROBE_SECONDS=90 $(NVIM) -l tests/probe_hang.lua

@@ -188,6 +188,11 @@ reloads keeping your cursor, and `u` still undoes it.
 	Create the approval agent in the global OpenCode config.
 :OpencodePermissions				*:OpencodePermissions*
 	Decide permissions that were left for later (the turn stays paused).
+:OpencodeQuestion				*:OpencodeQuestion*
+	Show the question that is waiting for an answer. The `question` tool does not
+	print anything: it creates a form, and the plugin turns it into a picker where
+	a digit picks an option, `o` types a custom answer and <Esc> leaves it for
+	later.
 :OpencodeEvents					*:OpencodeEvents*
 	Inspect the events received from the server (useful for debugging).
 :OpencodeHealth					*:OpencodeHealth*
@@ -248,7 +253,13 @@ Inside the prompt:
   <Esc>		close the prompt and the panel (see `ui.escape_closes`)
   <C-c>		cancel the current turn
 
-In the popups:
+In the question popup:
+  <CR>		pick the option on the current line
+  1-9		pick that option
+  o		answer with your own text (when the question allows it)
+  <Esc>		answer later (:OpencodeQuestion brings it back)
+
+In the permission/review popups:
   <CR>, y	allow once
   A		allow always (saves the rule)
   x		reject (with an optional message)
@@ -422,5 +433,8 @@ understand odd logs:
     falls back to `GET /api/vcs/diff?mode=working`.
   - There is no `session.idle` in a normal turn: the end of the turn is
     `session.execution.succeeded` (or `failed`/`interrupted`).
+  - The `question` tool creates a *form* (`POST
+    /api/session/{id}/form/{formID}/reply` with `{answer={key=value}}`) instead of
+    writing in the chat; the plugin renders it as a picker.
 
 vim:tw=78:ts=8:ft=help:norl:

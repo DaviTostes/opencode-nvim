@@ -221,6 +221,67 @@ function M.review(opts)
   })
 end
 
+--- Numbered chooser popup (used for questions): digits pick an option, <CR>
+--- picks the option on the cursor line, `o` types a custom answer.
+---@param opts { title?: string, body?: string[], options: { label: string, description?: string }[], on_choice: fun(index: integer?), on_other?: fun() }
+function M.choose(opts)
+  local lines = vim.deepcopy(opts.body or {})
+  lines[#lines + 1] = ""
+
+  local keymaps = {}
+  for index, option in ipairs(opts.options) do
+    lines[#lines + 1] = string.format("  [%d] %s%s", index, option.label,
+      option.description and ("  — " .. option.description) or "")
+    if index <= 9 then
+      keymaps[#keymaps + 1] = { tostring(index), function()
+        local cb = opts.on_choice
+        close()
+        cb(index)
+      end, option.label }
+    end
+  end
+
+  -- <CR> picks the option under the cursor
+  keymaps[#keymaps + 1] = { "<CR>", function()
+    local line = vim.api.nvim_get_current_line()
+    local index = tonumber(line:match("^%s*%[(%d+)%]"))
+    local cb = opts.on_choice
+    if index and opts.options[index] then
+      close()
+      return cb(index)
+    end
+    close()
+    cb(1)
+  end, "choose" }
+
+  if opts.on_other then
+    keymaps[#keymaps + 1] = { "o", function()
+      local other = opts.on_other
+      close()
+      other()
+    end, "type an answer" }
+  end
+  keymaps[#keymaps + 1] = { "<Esc>", function()
+    local cb = opts.on_choice
+    close()
+    cb(nil)
+  end, "answer later" }
+
+  local hint = "<CR> choose   1-9 pick"
+  if opts.on_other then hint = hint .. "   o type" end
+  hint = hint .. "   <Esc> later"
+
+  return open_float({
+    title = opts.title or "question",
+    lines = lines,
+    height = math.min(0.6, 0.25 + 0.04 * #opts.options),
+    width = 0.7,
+    keymaps = keymaps,
+    footer = footer(hint),
+    kind = "form",
+  })
+end
+
 --- Read-only text popup (used by `:OpencodeEvents`).
 function M.text(opts)
   return open_float({
