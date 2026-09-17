@@ -38,7 +38,11 @@ tmux send-keys -t "$SESSION" C-o ':lua _G.ui_check()' Enter
 sleep 2
 # a real submit: <CR> in the prompt
 tmux send-keys -t "$SESSION" Enter
-sleep 2
+sleep 1.5
+# the agent asks a question while we are typing: answer it from the dialog
+sleep 3.5
+tmux send-keys -t "$SESSION" '1'
+sleep 4
 
 echo "--- ui smoke log ---"
 cat "$LOG"
@@ -51,6 +55,7 @@ tail -3 "$LOG" | grep -q 'window=input mode=i' || {
   echo "UI SMOKE: the prompt lost the focus or the insert mode after sending"
   fail=1
 }
+grep -q 'DONE-QUESTION' "$LOG" || { echo "UI SMOKE: the question flow did not finish"; fail=1; }
 if [ "$fail" -ne 0 ]; then
   echo "UI SMOKE: FAILED"
   exit 1

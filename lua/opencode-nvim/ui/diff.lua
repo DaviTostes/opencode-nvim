@@ -14,9 +14,13 @@ local function close()
     pcall(vim.api.nvim_buf_delete, active.buf, { force = true })
   end
   local previous = active and active.previous_win
+  local was_inserting = active and active.was_inserting
   active = nil
   if previous and vim.api.nvim_win_is_valid(previous) then
     pcall(vim.api.nvim_set_current_win, previous)
+    -- You were typing when the dialog appeared: give the insert mode back where
+    -- it was, so answering does not drop you out of the flow.
+    if was_inserting then pcall(vim.cmd, "startinsert") end
   end
 end
 
@@ -50,6 +54,12 @@ local function open_float(opts)
   close()
 
   local previous_win = vim.api.nvim_get_current_win()
+  -- Dialogs are driven with normal-mode keys (digits, <CR>, `o`, `x`). If the
+  -- window we came from was inserting (the prompt usually is), the insert mode
+  -- would follow us here and every key would just error on a read-only buffer.
+  local was_inserting = vim.fn.mode(1):find("^[iR]") ~= nil
+  if was_inserting then pcall(vim.cmd, "stopinsert") end
+
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, normalize_lines(opts.lines))
   if opts.filetype then vim.bo[buf].filetype = opts.filetype end
@@ -84,7 +94,14 @@ local function open_float(opts)
   vim.wo[win].cursorline = true
   vim.wo[win].winhighlight = "Normal:OpencodeNormal,FloatBorder:OpencodeBorder,FloatTitle:OpencodeTitle"
 
-  active = { buf = buf, win = win, on_close = opts.on_close, previous_win = previous_win, kind = opts.kind }
+  active = {
+    buf = buf,
+    win = win,
+    on_close = opts.on_close,
+    previous_win = previous_win,
+    was_inserting = was_inserting,
+    kind = opts.kind,
+  }
 
   local keymaps = vim.deepcopy(opts.keymaps or {})
   -- Only add the defaults when the caller did not define them: a later

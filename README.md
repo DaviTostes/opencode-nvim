@@ -26,12 +26,11 @@ Local development: `vim.opt.rtp:prepend("/home/toast/opencode-nvim")`.
 ```
 
 Opening the panel takes the cursor, so its keys (`gd` diff, `r` resend, `zo`
-unfold, `q` close) work right away. Sending leaves the cleared prompt open and
-streaming never pulls you in; `:OpencodeFocus` switches between the panel and
-your code. `:OpencodeAsk` and `:OpencodeEdit` accept a range, so from visual
-mode `:'<,'>OpencodeAsk` works. No keymaps are installed by default; set
-`vim.g.mapleader` before `setup()` and see `:help opencode-nvim` for the
-`keymaps` options.
+unfold, `q` close) work right away and streaming never pulls you in;
+`:OpencodeFocus` switches between the panel and your code. `:OpencodeAsk`
+and `:OpencodeEdit` accept a range, so `:'<,'>OpencodeAsk` works from visual
+mode. No keymaps are installed by default; set `vim.g.mapleader` before
+`setup()` and see `:help opencode-nvim` for the `keymaps` options.
 
 ## Commands
 
@@ -54,7 +53,7 @@ mode `:'<,'>OpencodeAsk` works. No keymaps are installed by default; set
 | `:OpencodeApproval` | in-editor approval status |
 | `:OpencodeApprovalAgent` | create the approval agent in the OpenCode config |
 | `:OpencodePermissions` | decide permissions you left for later |
-| `:OpencodeQuestion` | show the question waiting for an answer |
+| `:OpencodeQuestion` | show the question waiting for an answer (digit picks an option, `o` types your own, `<Esc>` later) |
 | `:OpencodeFocus` | switch the cursor between the panel and your code |
 | `:OpencodeDoctor` | diagnose a turn that never answers |
 | `:OpencodeHealth` / `:OpencodeEvents` / `:OpencodeLog` | connection, event log, log level |

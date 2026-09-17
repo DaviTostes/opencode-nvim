@@ -157,6 +157,35 @@ _G.ui_check = function()
   log("DONE")
 end
 
+-- A question raised by the agent *while you are typing*: the dialog must open
+-- in normal mode (its keys are digits/<CR>/o) and answering must give the prompt
+-- back with its insert mode.
+local QUESTION = {
+  id = "frm_smoke",
+  sessionID = "ses_smoke",
+  title = "Questions",
+  metadata = { kind = "question" },
+  fields = {
+    { key = "q0", type = "string", title = "Pick one",
+      options = { { value = "Lua", label = "Lua" }, { value = "Python", label = "Python" } } },
+  },
+}
+
+_G.ui_raise_question = function()
+  log(string.format("PROBE %-26s window=%s mode=%s", "before-question", where(), vim.fn.mode(1)))
+  event.emit({ type = "form.created", data = { form = QUESTION } })
+  vim.defer_fn(function()
+    local mode = vim.fn.mode(1)
+    check("question-dialog", "popup")
+    log(string.format("%s dialog-mode %s (n expected)", mode:find("^n") and "PASS" or "FAIL", mode))
+  end, 400)
+  vim.defer_fn(function()
+    check("after-answering", "input")
+    log(string.format("%s answered-mode %s (insert expected)", vim.fn.mode(1):find("^[iR]") and "PASS" or "FAIL", vim.fn.mode(1)))
+    log("DONE-QUESTION")
+  end, 3000)
+end
+
 -- Observable state, so the shell can see what happened after a real <CR>.
 local ticks = 0
 local timer = (vim.uv or vim.loop).new_timer()
@@ -164,5 +193,16 @@ timer:start(500, 500, vim.schedule_wrap(function()
   ticks = ticks + 1
   log(string.format("STATE tick=%d window=%s mode=%s", ticks, where(), vim.fn.mode(1)))
 end))
+
+-- arm the question for a moment when the shell will have the prompt open
+session.current = {
+  id = "ses_smoke",
+  agent = "build",
+  approval = false,
+  tokens = {},
+  cost = 0,
+  location = { directory = vim.uv.cwd() },
+}
+vim.defer_fn(function() pcall(_G.ui_raise_question) end, 4500)
 
 log("READY")
