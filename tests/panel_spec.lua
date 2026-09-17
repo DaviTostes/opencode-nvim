@@ -179,18 +179,62 @@ test("opens the diff popup with patches", function()
   diff.close()
 end)
 
-test("review popup offers revert", function()
+test("review popup offers revert and shows its keys", function()
   local reverted = false
   diff.review({
     patches = { { file = "b.lua", patch = "+x", additions = 1, deletions = 0, status = "modified" } },
     on_revert = function() reverted = true end,
   })
   settle(80)
-  local text = table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false), "\n")
-  assert(text:find("undo the turn", 1, true), text)
-  vim.api.nvim_feedkeys("r", "x", false)
+  local win = vim.api.nvim_get_current_win()
+  -- get_config reports the footer as a list of lines of chunks
+  local footer = vim.api.nvim_win_get_config(win).footer or {}
+  local footer_text = ""
+  for _, line in ipairs(footer) do
+    footer_text = footer_text .. (type(line) == "table" and table.concat(line) or tostring(line))
+  end
+  assert(footer_text:find("undo the turn", 1, true), "footer missing: " .. vim.inspect(footer))
+
+  vim.api.nvim_feedkeys("u", "x", false)
   settle(80)
-  assert(reverted, "the r key did not call on_revert")
+  assert(reverted, "the u key did not call on_revert")
+end)
+
+test("permission popup leaves navigation and search keys alone", function()
+  local choice, chosen = "unset", false
+  diff.patches({
+    title = "approve",
+    patches = { { file = "c.lua", patch = "+x", additions = 1, deletions = 0, status = "modified" } },
+    on_choice = function(value) choice, chosen = value, true end,
+  })
+  settle(80)
+  local buf = vim.api.nvim_get_current_buf()
+
+  -- navigation and search must not be shadowed by popup actions
+  for _, key in ipairs({ "n", "a", "r", "j", "k", "g", "G", "/", "d" }) do
+    local map = vim.fn.maparg(key, "n", false, true)
+    assert(type(map) ~= "table" or map.buffer ~= 1 or vim.tbl_isempty(map),
+      string.format("%q is bound in the approval popup (%s)", key, vim.inspect(map)))
+  end
+
+  -- <Esc> means "decide later", not a bare close (it used to be overridden)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "x", false)
+  settle(80)
+  assert(chosen, "<Esc> did not call the decision callback")
+  assert(choice == nil, "expected 'decide later', got " .. vim.inspect(choice))
+  assert(not vim.api.nvim_buf_is_valid(buf), "the popup did not close")
+
+  -- y allows once
+  choice, chosen = "unset", false
+  diff.patches({
+    title = "approve",
+    patches = { { file = "d.lua", patch = "+x", additions = 1, deletions = 0, status = "modified" } },
+    on_choice = function(value) choice, chosen = value, true end,
+  })
+  settle(80)
+  vim.api.nvim_feedkeys("y", "x", false)
+  settle(80)
+  assert(chosen and choice == "once", vim.inspect({ chosen, choice }))
 end)
 
 test("opens the panel window and the prompt", function()

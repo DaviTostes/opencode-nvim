@@ -64,6 +64,8 @@ local function open_float(opts)
     border = ui.border or "rounded",
     title = " " .. (opts.title or "opencode") .. " ",
     title_pos = "center",
+    footer = opts.footer or nil,
+    footer_pos = opts.footer and "center" or nil,
     zindex = 100,
   })
 
@@ -71,13 +73,19 @@ local function open_float(opts)
   vim.wo[win].linebreak = true
   vim.wo[win].signcolumn = "no"
   vim.wo[win].foldcolumn = "0"
+  vim.wo[win].cursorline = true
   vim.wo[win].winhighlight = "Normal:OpencodeNormal,FloatBorder:OpencodeBorder,FloatTitle:OpencodeTitle"
 
   active = { buf = buf, win = win, on_close = opts.on_close, previous_win = previous_win }
 
   local keymaps = vim.deepcopy(opts.keymaps or {})
-  keymaps[#keymaps + 1] = { "q", close, "close" }
-  keymaps[#keymaps + 1] = { "<Esc>", close, "close" }
+  -- Only add the defaults when the caller did not define them: a later
+  -- `vim.keymap.set` for the same key would silently override the caller (that
+  -- is how "<Esc> decide later" used to end up as a plain close).
+  local defined = {}
+  for _, map in ipairs(keymaps) do defined[map[1]] = true end
+  if not defined["q"] then keymaps[#keymaps + 1] = { "q", close, "close" } end
+  if not defined["<Esc>"] then keymaps[#keymaps + 1] = { "<Esc>", close, "close" } end
 
   for _, map in ipairs(keymaps) do
     vim.keymap.set("n", map[1], map[2], {
@@ -89,6 +97,13 @@ local function open_float(opts)
   end
 
   return active
+end
+
+--- Keys are shown in the float footer so they never scroll out of view.
+local READ_HINT = "j/k, <C-d>/<C-u>, / and gg/G to read"
+local function footer(extra)
+  if extra and extra ~= "" then return " " .. extra .. "  ·  " .. READ_HINT .. " " end
+  return " " .. READ_HINT .. "  ·  q/<Esc> close "
 end
 
 local function patch_lines(patches)
@@ -111,12 +126,16 @@ end
 function M.patches(opts)
   local lines = patch_lines(opts.patches)
   local keymaps = {}
+  local hint
 
   if opts.on_choice then
-    lines[#lines + 1] = "<CR> allow once    a allow always    n reject    <Esc> decide later"
+    -- NOTE: navigation keys stay free. `n` (search next) and `a` were actions
+    -- before, which silently ran them when the user tried to navigate.
+    hint = "<CR>/y allow once   A allow always   x reject   <Esc> later"
     keymaps[#keymaps + 1] = { "<CR>", function() local cb = opts.on_choice; close(); cb("once") end, "allow once" }
-    keymaps[#keymaps + 1] = { "a", function() local cb = opts.on_choice; close(); cb("always") end, "allow always" }
-    keymaps[#keymaps + 1] = { "n", function()
+    keymaps[#keymaps + 1] = { "y", function() local cb = opts.on_choice; close(); cb("once") end, "allow once" }
+    keymaps[#keymaps + 1] = { "A", function() local cb = opts.on_choice; close(); cb("always") end, "allow always" }
+    keymaps[#keymaps + 1] = { "x", function()
       local cb = opts.on_choice
       close()
       vim.ui.input({ prompt = "Rejection reason (optional): " }, function(text)
@@ -124,6 +143,7 @@ function M.patches(opts)
       end)
     end, "reject" }
     keymaps[#keymaps + 1] = { "<Esc>", function() local cb = opts.on_choice; close(); cb(nil) end, "decide later" }
+    keymaps[#keymaps + 1] = { "q", function() local cb = opts.on_choice; close(); cb(nil) end, "decide later" }
   end
 
   return open_float({
@@ -131,6 +151,7 @@ function M.patches(opts)
     lines = lines,
     filetype = "diff",
     keymaps = keymaps,
+    footer = footer(hint),
   })
 end
 
@@ -138,13 +159,12 @@ end
 ---@param opts { title: string, body: string[], on_choice: fun(choice: "once"|"always"|"reject"|nil, message?: string) }
 function M.confirm(opts)
   local lines = vim.deepcopy(opts.body or {})
-  lines[#lines + 1] = ""
-  lines[#lines + 1] = "<CR> allow once    a allow always    n reject    <Esc> decide later"
 
   local keymaps = {
     { "<CR>", function() local cb = opts.on_choice; close(); cb("once") end, "allow once" },
-    { "a", function() local cb = opts.on_choice; close(); cb("always") end, "allow always" },
-    { "n", function()
+    { "y", function() local cb = opts.on_choice; close(); cb("once") end, "allow once" },
+    { "A", function() local cb = opts.on_choice; close(); cb("always") end, "allow always" },
+    { "x", function()
       local cb = opts.on_choice
       close()
       vim.ui.input({ prompt = "Rejection reason (optional): " }, function(text)
@@ -152,6 +172,7 @@ function M.confirm(opts)
       end)
     end, "reject" },
     { "<Esc>", function() local cb = opts.on_choice; close(); cb(nil) end, "decide later" },
+    { "q", function() local cb = opts.on_choice; close(); cb(nil) end, "decide later" },
   }
 
   return open_float({
@@ -160,6 +181,7 @@ function M.confirm(opts)
     height = 0.4,
     width = 0.7,
     keymaps = keymaps,
+    footer = footer("<CR>/y allow once   A allow always   x reject   <Esc> later"),
   })
 end
 
@@ -167,18 +189,18 @@ end
 ---@param opts { title?: string, patches: table[], on_revert?: fun() }
 function M.review(opts)
   local lines = patch_lines(opts.patches)
-  lines[#lines + 1] = "<CR> keep    r undo the turn    <Esc> close"
   return open_float({
     title = opts.title or "turn changes",
     lines = lines,
     filetype = "diff",
     keymaps = {
       { "<CR>", close, "keep" },
-      { "r", function()
+      { "u", function()
         close()
         if opts.on_revert then opts.on_revert() end
       end, "undo the turn" },
     },
+    footer = footer("<CR> keep   u undo the turn"),
   })
 end
 
@@ -191,6 +213,7 @@ function M.text(opts)
     width = opts.width,
     height = opts.height,
     keymaps = {},
+    footer = footer(),
   })
 end
 

@@ -3,11 +3,10 @@
 Use [OpenCode](https://opencode.ai) from inside Neovim **without losing sight of
 your code**.
 
-Instead of opening a terminal with the TUI (which takes over the screen), the
-panel is a float anchored to the bottom right corner that **does not steal
-focus**: the answer streams in while you keep reading and editing the file. When
-the AI wants to touch a file, the diff shows up in a popup inside Neovim and you
-approve it with `<CR>` — before anything is written.
+The panel is a float in the bottom right corner that **does not steal focus**:
+the answer streams in while you keep reading and editing. When the AI wants to
+touch a file the diff appears in a popup and you approve it with `<CR>` — before
+anything is written.
 
 - Text, reasoning and tool calls streaming in the panel
 - Edit approval with the diff inside the editor (nothing is written unseen)
@@ -18,12 +17,12 @@ approve it with `<CR>` — before anything is written.
 
 ## Requirements
 
-- Neovim **0.11+** (uses `vim.uv`, `vim.json`, `vim.base64`, `vim.fs`)
+- Neovim **0.11+** (`vim.uv`, `vim.json`, `vim.base64`, `vim.fs`)
 - OpenCode **V2** (`opencode2`) in `PATH`
 
-The plugin talks to the OpenCode HTTP service (the same background service the
-TUI uses) and starts one if none is running. The HTTP/SSE client is pure Lua on
-top of `vim.uv` — no `curl`, no `plenary`.
+The plugin talks to the OpenCode HTTP service (the background service the TUI
+uses) and starts one if none is running. The HTTP/SSE client is pure Lua on
+`vim.uv` — no `curl`, no `plenary`.
 
 ## Install
 
@@ -41,8 +40,7 @@ vim.opt.rtp:prepend("/home/toast/opencode-nvim")
 require("opencode-nvim").setup({})
 ```
 
-If `setup()` is never called the plugin configures itself with the defaults on
-`VimEnter`.
+Without `setup()` the plugin configures itself with the defaults on `VimEnter`.
 
 ## Daily use
 
@@ -55,15 +53,15 @@ Four flows cover almost everything:
 | ask for an **edit** | select the code and `<leader>ti`, describe the change, then approve the diff with `<CR>` |
 | review what the AI did | `gd` in the panel (or `:OpencodeDiff`); `r` in that popup undoes the turn |
 
-You do **not** have to type `@this`: with `context.auto = true` (default) every
-prompt carries a compact header — `[editor context] file=... cursor=...` plus
-the selected code, the filetype, `modified=true` and the diagnostics count — so
-"look at this file" or "is this right?" work with the file you are looking at.
-Typing a placeholder (`@this`, `@diff`, ...) instead skips the automatic part.
+You don't have to type `@this`: with `context.auto = true` (default) every
+prompt carries a header — `[editor context] file=... cursor=...`, the selected
+code, the filetype, `modified=true` and the diagnostics count — so "look at this
+file" works on the file you're looking at. A placeholder (`@this`, `@diff`, ...)
+skips the automatic part.
 
-A typical edit loop: put the cursor on the function, `<leader>ti`, type "make it
-accept a callback", `<CR>`, the diff popup appears, `<CR>` approves, the buffer
-reloads keeping your cursor, and `u` still undoes it if you change your mind.
+A typical edit loop: `<leader>ti` on the function, "make it accept a callback",
+`<CR>`, then approve the diff with `<CR>`. The buffer reloads keeping your
+cursor, and `u` still undoes it.
 
 ## Usage
 
@@ -77,14 +75,14 @@ reloads keeping your cursor, and `u` still undoes it if you change your mind.
 | `<leader>tg` | pick an agent |
 | `<leader>td` | diff of the last turn |
 | `<leader>tx` | interrupt |
-| `<leader>tu` | undo the last turn |
+| `<leader>tu` | undo the last turn (`u` in the review popup too) |
 | `<leader>tc` | pick a ready-made action |
 | `<leader>ti` | edit this (selection or file) with an instruction |
 
 In the panel: `i`/`a`/`<CR>` opens the prompt, `q`/`<Esc>` closes it, `<C-c>`
-interrupts, `gd` shows the diff, `r` resends the last prompt (handy when the
-provider hiccups), `G` goes to the end. While a turn runs the panel shows
-`▸ thinking…` and the title counts the elapsed time (`● 12s`).
+interrupts, `gd` shows the diff, `r` resends the last prompt, `G` jumps to the
+end. While a turn runs the panel shows `▸ thinking…` and the title counts the
+elapsed time (`● 12s`).
 
 How the panel reads:
 
@@ -96,17 +94,21 @@ How the panel reads:
 the answer text                      <- plain text, no gutter
 ```
 
-Only reasoning is folded (and only collapsed); `zo` opens one block, `zR` opens
-them all. Reasoning is also guttered (`│ `) so it stays distinguishable when
-expanded, and each new turn is separated by a blank line. After sending, the
-prompt stays open for the next message (`ui.focus_after_submit = "input"`;
-use `"code"` to jump back to your code, `"panel"` to land in the panel).
+Only reasoning is folded; `zo` opens one block, `zR` all. Reasoning is guttered
+(`│ `) so it stays distinguishable when expanded. After sending, the prompt
+stays open for the next message (`ui.focus_after_submit = "input"`; `"code"`
+jumps back to your code, `"panel"` lands in the panel).
 
 In the prompt: `<CR>` sends, `<C-j>` newline, `<C-x><C-o>` completes files and
 placeholders, `<Esc>` closes.
 
-In the diff/permission popup: `<CR>` allows once, `a` allows always, `n` rejects
-(with an optional message), `<Esc>` decides later.
+In the diff/permission popup: `<CR>` (or `y`) allows once, `A` allows always,
+`x` rejects (with an optional message), `<Esc>`/`q` decides later. In the turn
+review popup: `<CR>` keeps the changes, `u` undoes the turn.
+
+These popups are ordinary buffers: `j`/`k`, `<C-d>`/`<C-u>`, `/`, `gg`/`G` and
+yanking all work (the actions deliberately avoid those keys), and the available
+keys are always visible in the float footer.
 
 Commands:
 
@@ -134,12 +136,11 @@ Commands:
 
 ## Model
 
-By default the plugin uses **the same model you last used in the TUI** (it reads
-`~/.local/state/opencode/model.json`). That is not just convenience: the server
-default model can be a free tier model that refuses to run — on `opencode-go`
-the default `opencode/union-alpha` answers
-`OpenCode 1.17.0 or newer is required to use the free tier`, which was the cause
-of a first prompt silently doing nothing.
+By default the plugin uses **the model you last used in the TUI**
+(`~/.local/state/opencode/model.json`). The server default is often a free tier
+model that refuses to run — on `opencode-go`, `opencode/union-alpha` answers
+`OpenCode 1.17.0 or newer is required to use the free tier`, which makes the
+first prompt silently do nothing.
 
 To pin a model:
 
@@ -147,19 +148,18 @@ To pin a model:
 model = { providerID = "opencode-go", id = "deepseek-v4.1-flash" }
 ```
 
-Switching in a live session: `<leader>tm`. A configured model that does not
-exist in the project catalogue is dropped with a warning instead of breaking the
-session.
+Switch in a live session with `<leader>tm`. A configured model missing from the
+project catalogue is dropped with a warning instead of breaking the session.
 
 ## Edit approval
 
 The plugin tries the safest mode first and degrades gracefully:
 
-1. **Pre-approval (the good one).** When an agent whose rules ask for approval on
-   `edit` (or `shell`) exists, edits **pause** and the proposed diff shows up in
-   Neovim; the file is written only after your `<CR>`. The plugin detects such an
-   agent automatically, and if there is none `:OpencodeApprovalAgent` creates one
-   (`opencode-nvim`) in the OpenCode config:
+1. **Pre-approval (the good one).** With an agent that asks for approval on
+   `edit` (or `shell`), edits **pause** and the diff shows up in Neovim; the
+   file is written only after your `<CR>`. The plugin detects such an agent, and
+   if there is none `:OpencodeApprovalAgent` creates one (`opencode-nvim`) in
+   the OpenCode config:
 
    ```jsonc
    {
@@ -176,13 +176,13 @@ The plugin tries the safest mode first and degrades gracefully:
    }
    ```
 
-   Then run `opencode2 service restart`. To check: `:OpencodeApproval`.
+   Then `opencode2 service restart`. Check with `:OpencodeApproval`.
 
-2. **Review after the turn (works with no config).** The turn runs and, when it
-   finishes, the plugin shows the diff in a popup: `<CR>` keeps it, `r` **undoes
-   the turn** (restores the files), `<Esc>` closes it. `:OpencodeUndo` does the
-   same from outside the popup. To only warn instead of opening a popup:
-   `approval = { review = "notify" }`; to disable it: `approval = { review = false }`.
+2. **Review after the turn (no config needed).** When the turn finishes the
+   plugin shows the diff in a popup: `<CR>` keeps it, `r` **undoes the turn**
+   (restores the files), `<Esc>` closes. `:OpencodeUndo` does the same from
+   outside the popup. Warn only with `approval = { review = "notify" }`, or
+   disable with `approval = { review = false }`.
 
 Neovim's own `u` keeps working on the buffers.
 
@@ -206,7 +206,7 @@ require("opencode-nvim").setup({
 })
 ```
 
-Every option, command, event and the Lua API are documented in
+All options, commands, events and the Lua API are documented in
 [`doc/opencode-nvim.txt`](doc/opencode-nvim.txt) (`:help opencode-nvim`).
 
 ## Editor context
@@ -239,25 +239,25 @@ Neovim (Lua)                             OpenCode V2
   │     session.execution.*  → end of turn │
 ```
 
-`mini.pick` (pickers), `mini.icons` and `mini.diff` are used **if** they are
-installed; nothing is required.
+`mini.pick` (pickers), `mini.icons` and `mini.diff` are used **if** installed;
+nothing is required.
 
 ## Beta V2 notes (what the plugin works around)
 
-While the V2 API is in beta some behaviour differs from the published OpenAPI.
-These were verified against `0.0.0-beta-19271` and are handled in the code:
+The beta V2 API differs from the published OpenAPI. These were verified against
+`0.0.0-beta-19271` and handled in the code:
 
 | Observation | Workaround in the plugin |
 | --- | --- |
-| `permissions` sent to `POST /api/session` is ignored (not stored, not enforced) | approval through an **agent** (`agents.<id>.permissions`) |
-| `POST .../permission/{id}/reply` expects `{"reply": "once"}`, not `{"decision": ...}` | sends `reply` and falls back to `decision` on a 400 |
-| `GET /api/agent` is location-scoped and only complete after the location is loaded | calls `GET /api/location` first and retries until the expected agent shows up |
-| `GET /api/session/{id}/diff` is not routed (empty 404) | falls back to `GET /api/vcs/diff?mode=working` |
+| `permissions` in `POST /api/session` is ignored | approval through an **agent** (`agents.<id>.permissions`) |
+| `POST .../permission/{id}/reply` wants `{"reply": "once"}`, not `{"decision": ...}` | sends `reply`, falls back to `decision` on a 400 |
+| `GET /api/agent` is location-scoped, incomplete until the location loads | calls `GET /api/location` first and retries until the agent shows up |
+| `GET /api/session/{id}/diff` is unrouted (empty 404) | falls back to `GET /api/vcs/diff?mode=working` |
 | A normal turn **does not** emit `session.idle` | end of turn is `session.execution.succeeded/failed/interrupted` |
 | `session.text.ended` carries the full part text | the renderer repairs dropped deltas with it |
-| Snapshots (turn diff and file restore on revert) rely on **git** | falls back to the working tree diff and warns outside a repo |
-| The `opencode-go` provider is flaky and sometimes returns misleading errors ("OpenCode 1.17.0 or newer is required to use the free tier", "Endpoint is unavailable") | the real reason shows in the panel and `r` resends the last prompt |
-| A provider request can hang without any event for minutes | the panel shows the elapsed time, warns at 30s with the last event of the session, and `:OpencodeDoctor` prints the whole state |
+| Snapshots (turn diff, restore on revert) rely on **git** | falls back to the working tree diff and warns outside a repo |
+| The `opencode-go` provider is flaky and returns misleading errors ("OpenCode 1.17.0 or newer is required to use the free tier", "Endpoint is unavailable") | the real reason shows in the panel and `r` resends the last prompt |
+| A request can hang for minutes with no event | the panel shows the elapsed time, warns at 30s with the last event, and `:OpencodeDoctor` prints the whole state |
 
 ## Tests
 
@@ -273,8 +273,8 @@ make lint           # syntax check of every .lua file
 
 ## Status
 
-Beta, written against the (experimental) V2 API. If something changes on the
-server side, `:OpencodeEvents` shows exactly what arrived and
+Beta, written against the (experimental) V2 API. When the server changes,
+`:OpencodeEvents` shows exactly what arrived and
 `log = { level = "debug", file = "/tmp/opencode-nvim.log" }` records everything.
 
 ## License

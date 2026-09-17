@@ -243,10 +243,18 @@ Inside the prompt:
   <C-c>		cancel the current turn
 
 In the permission/diff popup:
-  <CR>		allow once
-  a		allow always (saves the rule)
-  n		reject (with an optional message)
-  <Esc>		decide later (the execution stays paused)
+  <CR>, y	allow once
+  A		allow always (saves the rule)
+  x		reject (with an optional message)
+  <Esc>, q	decide later (the execution stays paused)
+
+In the turn review popup:
+  <CR>		keep the changes
+  u		undo the turn
+
+These popups are ordinary buffers: j/k, <C-d>/<C-u>, /, gg/G and yanking all
+work (the actions avoid those keys) and the available keys are always shown in
+the float footer.
 
 ==============================================================================
 7. Context					*opencode-nvim-context*
@@ -295,16 +303,16 @@ two levels:
 2. Review after the turn (works with no config at all). When a turn that touched
    files finishes, the diff shows up in a popup: >
 
-     <CR> keep       r undo the turn       <Esc> close
+     <CR> keep       u undo the turn       <Esc> close
 <
    `:OpencodeUndo` does the same from outside the popup.
 
 In the permission popup: >
 
-  <CR> allow once
-  a    allow always (saves the rule for the project)
-  n    reject (with an optional message)
-  <Esc> decide later (the turn stays paused; see :OpencodePermissions)
+  <CR>, y  allow once
+  A        allow always (saves the rule for the project)
+  x        reject (with an optional message)
+  <Esc>, q decide later (the turn stays paused; see :OpencodePermissions)
 <
 
 The agent rules apply only to the plugin sessions; the TUI keeps its own
