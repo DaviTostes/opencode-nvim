@@ -123,7 +123,7 @@ function M.patches(opts)
         cb("reject", text)
       end)
     end, "reject" }
-    keymaps[#keymaps + 1] = { "<Esc>", function() local cb = opts.on_choice close() cb(nil) end, "decide later" }
+    keymaps[#keymaps + 1] = { "<Esc>", function() local cb = opts.on_choice; close(); cb(nil) end, "decide later" }
   end
 
   return open_float({
@@ -151,7 +151,7 @@ function M.confirm(opts)
         cb("reject", text)
       end)
     end, "reject" },
-    { "<Esc>", function() local cb = opts.on_choice close() cb(nil) end, "decide later" },
+    { "<Esc>", function() local cb = opts.on_choice; close(); cb(nil) end, "decide later" },
   }
 
   return open_float({

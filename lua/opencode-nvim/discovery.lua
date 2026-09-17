@@ -110,7 +110,10 @@ local function autostart(cb)
   log.debug("starting/validating the service via", command)
   vim.system({ command, "api", "get", "/api/health" }, { text = true, timeout = 60000 }, function()
     -- The service writes its address to service.json while starting.
-    local deadline = (vim.uv or vim.loop).now() + 15000
+    local deadline = (vim.uv or vim.loop).now() + (options().start_timeout or 15000)
+    -- Forward declaration: `attempt` below refers to `retry`, and a `local
+    -- function` declared after its use would resolve to a (nil) global.
+    local retry
     local function attempt()
       local server = M.server_from_service(M.read_service())
       if server then
@@ -125,7 +128,7 @@ local function autostart(cb)
         retry()
       end
     end
-    local function retry()
+    retry = function()
       if (vim.uv or vim.loop).now() > deadline then
         return cb("could not start the OpenCode service")
       end

@@ -242,6 +242,33 @@ test("resolve_model falls back to the TUI preferred model", function()
   assert(known and known.id == "b" and known.variant == "v", vim.inspect(known))
 end)
 
+test("the stall warning names the last event of the session", function()
+  plugin.clear()
+  settle()
+  feed("session.execution.started") -- a turn started and never produced content
+  settle()
+
+  -- Pretend 31s went by (calling tick() directly: no need to wait).
+  panel.state.status = "running"
+  panel.state.running_since = (vim.uv or vim.loop).now() - 31000
+  panel.state.warned_slow = false
+  panel.tick()
+  settle()
+
+  local text = panel_text()
+  assert(text:find("no response for", 1, true), "no stall warning:\n" .. text)
+  assert(text:find("last event:", 1, true), "the warning does not name the last event:\n" .. text)
+
+  -- And it is taken back as soon as content arrives.
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "late answer" })
+  feed("session.text.ended", { text = "late answer" })
+  settle()
+  text = panel_text()
+  assert(not text:find("no response for", 1, true), "the stall warning was not removed:\n" .. text)
+  assert(text:find("late answer", 1, true), text)
+end)
+
 test("a fresh session does not wipe the panel", function()
   local session = require("opencode-nvim.session")
   local saved_current, saved_sid = session.current, panel.state.session_id

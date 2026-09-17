@@ -94,47 +94,6 @@ function M.title()
   return table.concat(parts, " · ")
 end
 
-function M.set_status(status)
-  local now = (vim.uv or vim.loop).now()
-  if status == "running" and state.status ~= "running" then
-    state.running_since = now
-    state.warned_slow = false
-  elseif status ~= "running" then
-    state.running_since = nil
-  end
-  state.status = status
-  if status == "running" then M.start_ticker() else M.stop_ticker() end
-  M.update_title()
-end
-
---- Keeps the title counting while a turn runs, and warns once when the
---- provider is taking too long (otherwise a stalled turn looks like a no-op).
-function M.start_ticker()
-  if state.ticker then return end
-  state.ticker = (vim.uv or vim.loop).new_timer()
-  state.ticker:start(1000, 1000, vim.schedule_wrap(function()
-    if state.status ~= "running" then return end
-    M.update_title()
-    local elapsed = state.running_since and ((vim.uv or vim.loop).now() - state.running_since) / 1000 or 0
-    if elapsed > 30 and not state.warned_slow then
-      state.warned_slow = true
-      local text = string.format(
-        "no response for %ds (last event: %s) — the provider may be slow; <C-c> interrupts, r resends, :OpencodeDoctor diagnoses",
-        math.floor(elapsed), last_event_summary())
-      state.stall_text = text
-      M.renderer():note(text, "meta")
-      M.scroll_soon()
-    end
-  end))
-end
-
-function M.stop_ticker()
-  if not state.ticker then return end
-  state.ticker:stop()
-  state.ticker:close()
-  state.ticker = nil
-end
-
 --- Takes back the "thinking" placeholder when real content shows up.
 local function clear_thinking(renderer)
   if not state.thinking then return end
@@ -152,6 +111,9 @@ end
 
 --- Short summary of the last event that belongs to this session, so a stalled
 --- turn can be told apart from a dead stream.
+---
+--- NOTE: defined before the ticker on purpose — a `local function` declared
+--- after its use would resolve to a global and blow up at 30s.
 local function last_event_summary()
   local history = event.history()
   local now = os.time()
@@ -166,6 +128,50 @@ local function last_event_summary()
   end
   return "none"
 end
+
+function M.set_status(status)
+  local now = (vim.uv or vim.loop).now()
+  if status == "running" and state.status ~= "running" then
+    state.running_since = now
+    state.warned_slow = false
+  elseif status ~= "running" then
+    state.running_since = nil
+  end
+  state.status = status
+  if status == "running" then M.start_ticker() else M.stop_ticker() end
+  M.update_title()
+end
+
+--- Keeps the title counting while a turn runs, and warns once when the
+--- provider is taking too long (otherwise a stalled turn looks like a no-op).
+function M.tick()
+  if state.status ~= "running" then return end
+  M.update_title()
+  local elapsed = state.running_since and ((vim.uv or vim.loop).now() - state.running_since) / 1000 or 0
+  if elapsed > 30 and not state.warned_slow then
+    state.warned_slow = true
+    local text = string.format(
+      "no response for %ds (last event: %s) — the provider may be slow; <C-c> interrupts, r resends, :OpencodeDoctor diagnoses",
+      math.floor(elapsed), last_event_summary())
+    state.stall_text = text
+    M.renderer():note(text, "meta")
+    M.scroll_soon()
+  end
+end
+
+function M.start_ticker()
+  if state.ticker then return end
+  state.ticker = (vim.uv or vim.loop).new_timer()
+  state.ticker:start(1000, 1000, vim.schedule_wrap(M.tick))
+end
+
+function M.stop_ticker()
+  if not state.ticker then return end
+  state.ticker:stop()
+  state.ticker:close()
+  state.ticker = nil
+end
+
 
 local function input_open()
   return state.input.win ~= nil and vim.api.nvim_win_is_valid(state.input.win)

@@ -22,6 +22,7 @@ M.defaults = {
     url = nil,
     password = nil,
     state_dir = nil,
+    start_timeout = 15000, -- ms to wait for a service this plugin started
   },
   agent = "build",
   model = nil,

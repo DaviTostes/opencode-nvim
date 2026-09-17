@@ -3,6 +3,7 @@ NVIM ?= nvim
 .PHONY: test e2e lint tags
 
 test:
+	$(NVIM) -l tests/discovery_spec.lua
 	$(NVIM) -l tests/http_spec.lua
 	$(NVIM) -l tests/sse_spec.lua
 	$(NVIM) -l tests/panel_spec.lua
