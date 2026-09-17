@@ -13,6 +13,8 @@ local Renderer = require("opencode-nvim.ui.render")
 --- code window while the answer streams beside it.
 local M = {}
 
+local THINKING_LINE = "▸ pensando…"
+
 local state = {
   buf = nil,
   win = nil,
@@ -22,6 +24,11 @@ local state = {
   last_selection = nil,
   model = nil,
   geom = nil,
+  session_id = nil,
+  thinking = false,
+  running_since = nil,
+  warned_slow = false,
+  ticker = nil,
   input = {
     buf = nil,
     win = nil,
@@ -71,24 +78,82 @@ function M.title()
   else
     parts[#parts + 1] = "opencode · sem sessão"
   end
-  if state.status == "running" then parts[#parts + 1] = "●" end
+  if state.status == "running" then
+    local elapsed = state.running_since
+      and math.floor(((vim.uv or vim.loop).now() - state.running_since) / 1000)
+      or 0
+    parts[#parts + 1] = elapsed > 0 and string.format("● %ds", elapsed) or "●"
+  end
   if state.status == "error" then parts[#parts + 1] = "!" end
-  if not event.connected() then parts[#parts + 1] = "offline" end
+  if not event.started() or event.connected() then
+    -- nothing to report (the stream only starts on first use)
+  else
+    parts[#parts + 1] = "offline"
+  end
   return table.concat(parts, " · ")
 end
 
 function M.set_status(status)
+  local now = (vim.uv or vim.loop).now()
+  if status == "running" and state.status ~= "running" then
+    state.running_since = now
+    state.warned_slow = false
+  elseif status ~= "running" then
+    state.running_since = nil
+  end
   state.status = status
+  if status == "running" then M.start_ticker() else M.stop_ticker() end
   M.update_title()
 end
 
-function M.update_title()
-  if not (state.win and vim.api.nvim_win_is_valid(state.win)) then return end
-  local width, height = state.geom[1], state.geom[2]
-  pcall(vim.api.nvim_win_set_config, state.win, {
+--- Keeps the title counting while a turn runs, and warns once when the
+--- provider is taking too long (otherwise a stalled turn looks like a no-op).
+function M.start_ticker()
+  if state.ticker then return end
+  state.ticker = (vim.uv or vim.loop).new_timer()
+  state.ticker:start(1000, 1000, vim.schedule_wrap(function()
+    if state.status ~= "running" then return end
+    M.update_title()
+    local elapsed = state.running_since and ((vim.uv or vim.loop).now() - state.running_since) / 1000 or 0
+    if elapsed > 30 and not state.warned_slow then
+      state.warned_slow = true
+      M.renderer():note("sem resposta há 30s — o provedor pode estar lento; <C-c> interrompe", "meta")
+      M.scroll_soon()
+    end
+  end))
+end
+
+function M.stop_ticker()
+  if not state.ticker then return end
+  state.ticker:stop()
+  state.ticker:close()
+  state.ticker = nil
+end
+
+--- Takes back the "thinking" placeholder when real content shows up.
+local function clear_thinking(renderer)
+  if not state.thinking then return end
+  state.thinking = false
+  renderer:drop_last(THINKING_LINE)
+end
+
+local function input_open()
+  return state.input.win ~= nil and vim.api.nvim_win_is_valid(state.input.win)
+end
+
+--- Full float config for the panel.
+---
+--- When the prompt is open the panel is lifted so both stack in the corner
+--- instead of overlapping.
+local function panel_config()
+  local width, height = panel_geometry()
+  state.geom = { width, height }
+  local lift = 0
+  if input_open() then lift = M.input_height() + 2 end
+  return {
     relative = "editor",
     anchor = "SE",
-    row = vim.o.lines - 2,
+    row = vim.o.lines - 2 - lift,
     col = vim.o.columns - 2,
     width = width,
     height = height,
@@ -96,8 +161,14 @@ function M.update_title()
     border = (cfg.get().ui.panel or {}).border or "rounded",
     title = " " .. M.title() .. " ",
     title_pos = "left",
+    focusable = true,
     zindex = 50,
-  })
+  }
+end
+
+function M.update_title()
+  if not (state.win and vim.api.nvim_win_is_valid(state.win)) then return end
+  pcall(vim.api.nvim_win_set_config, state.win, panel_config())
 end
 
 function M.set_keymaps(buf)
@@ -109,6 +180,7 @@ function M.set_keymaps(buf)
   vim.keymap.set("n", "<CR>", function() M.open_input() end, vim.tbl_extend("force", opts, { desc = "abrir prompt" }))
   vim.keymap.set("n", "<C-c>", function() M.interrupt() end, vim.tbl_extend("force", opts, { desc = "interromper" }))
   vim.keymap.set("n", "gd", function() M.show_diff() end, vim.tbl_extend("force", opts, { desc = "diff do turno" }))
+  vim.keymap.set("n", "r", function() M.retry() end, vim.tbl_extend("force", opts, { desc = "reenviar a última pergunta" }))
   vim.keymap.set("n", "G", function()
     state.autoscroll = true
     M.scroll_to_bottom()
@@ -153,22 +225,7 @@ end
 local function ensure_win()
   local buf = M.ensure_buf()
   if M.visible() then return state.win end
-  local width, height = panel_geometry()
-  state.geom = { width, height }
-  state.win = vim.api.nvim_open_win(buf, false, {
-    relative = "editor",
-    anchor = "SE",
-    row = vim.o.lines - 2,
-    col = vim.o.columns - 2,
-    width = width,
-    height = height,
-    style = "minimal",
-    border = (cfg.get().ui.panel or {}).border or "rounded",
-    title = " " .. M.title() .. " ",
-    title_pos = "left",
-    focusable = true,
-    zindex = 50,
-  })
+  state.win = vim.api.nvim_open_win(buf, false, panel_config())
   vim.wo[state.win].wrap = true
   vim.wo[state.win].linebreak = true
   vim.wo[state.win].signcolumn = "no"
@@ -292,11 +349,17 @@ function M.update_input_win()
   if not (state.input.buf and vim.api.nvim_buf_is_valid(state.input.buf)) then return end
   local width = select(1, panel_geometry())
   local ui = cfg.get().ui.input or {}
+
+  -- The panel anchors SE at (lines-2, columns-2), so its content spans
+  -- [columns-1-width, columns-2]. The prompt anchors SW, where `col` is the
+  -- content's left edge, so this lines both up exactly.
+  local left = math.max(0, vim.o.columns - 1 - width)
+
   local config = {
     relative = "editor",
     anchor = "SW",
     row = vim.o.lines - 2,
-    col = math.max(0, vim.o.columns - 2 - width),
+    col = left,
     width = width,
     height = M.input_height(),
     style = "minimal",
@@ -314,6 +377,9 @@ function M.update_input_win()
     vim.wo[state.input.win].linebreak = true
     vim.wo[state.input.win].winhighlight = "Normal:OpencodeNormal,FloatBorder:OpencodeBorder,FloatTitle:OpencodeTitle"
   end
+
+  -- The panel stacks above the prompt.
+  M.update_title()
 end
 
 --- Window/buffer that provides context for the prompt.
@@ -426,6 +492,7 @@ end
 ---@param opts? { target?: table, selection?: table, delivery?: string, new_session?: boolean }
 function M.send(text, opts)
   opts = opts or {}
+  state.last_prompt = { text = text, opts = opts }
   local target = opts.target
   local expanded, files = context.expand(text, {
     bufnr = target and target.bufnr or nil,
@@ -437,6 +504,8 @@ function M.send(text, opts)
   M.renderer():user(text)
   M.open({ input = false })
   M.set_status("running")
+  state.thinking = true
+  M.renderer():note(THINKING_LINE, "meta")
   M.scroll_to_bottom()
 
   session.prompt(expanded, {
@@ -445,6 +514,7 @@ function M.send(text, opts)
     new_session = opts.new_session,
   }, function(err)
     if err then
+      clear_thinking(M.renderer())
       M.set_status("error")
       M.renderer():error(err_text(err))
     end
@@ -456,6 +526,18 @@ function M.interrupt()
     if err then log.warn("interrupt: " .. err_text(err)) end
     M.set_status("idle")
   end)
+end
+
+--- Sends the last prompt again (provider hiccups are common).
+function M.retry()
+  if not state.last_prompt then
+    return log.notify("nada para reenviar ainda")
+  end
+  if state.status == "running" then
+    return log.notify("já tem um turno rodando")
+  end
+  local prompt = state.last_prompt
+  M.send(prompt.text, prompt.opts)
 end
 
 function M.show_diff()
@@ -591,6 +673,10 @@ function M.on_session(info)
   state.model = info.model and (info.model.id or info.model.modelID) or nil
   M.ensure_buf()
   M.update_title()
+  -- Re-rendering the same session would wipe text that is still streaming.
+  if state.session_id == info.id then return end
+  state.session_id = info.id
+  state.thinking = false
   M.renderer():clear()
   M.load_history()
 end
@@ -680,6 +766,7 @@ function M.on_event(ev)
   if kind == "server.connected" then
     M.update_title()
   elseif kind == "session.text.started" then
+    clear_thinking(renderer)
     renderer:finalize()
     M.set_status("running")
   elseif kind == "session.text.delta" then
@@ -687,12 +774,14 @@ function M.on_event(ev)
   elseif kind == "session.text.ended" then
     renderer:text_finished(util.pick_string(data, { "text" }))
   elseif kind == "session.reasoning.started" then
+    clear_thinking(renderer)
     renderer:finalize()
   elseif kind == "session.reasoning.delta" then
     renderer:stream("dim", event_text(data) or "")
   elseif kind == "session.reasoning.ended" then
     renderer:finalize()
   elseif kind == "session.tool.input.started" then
+    clear_thinking(renderer)
     renderer:tool_begin(tool_id(data) or "tool", tool_name(data))
   elseif kind == "session.tool.input.delta" then
     renderer:tool_args(tool_id(data) or "tool", event_text(data))
@@ -707,12 +796,18 @@ function M.on_event(ev)
     renderer:tool_end(tool_id(data) or "tool", false, tool_output(data))
   elseif kind == "session.execution.started" then
     M.set_status("running")
+    if not state.thinking then
+      state.thinking = true
+      renderer:note(THINKING_LINE, "meta")
+    end
   elseif kind == "session.execution.succeeded" or kind == "session.execution.interrupted" then
+    clear_thinking(renderer)
     renderer:finalize()
     M.set_status("idle")
     M.update_title()
     vim.defer_fn(M.review_turn, 150)
   elseif kind == "session.execution.failed" then
+    clear_thinking(renderer)
     M.set_status("error")
     local message = util.deep_find(data, { "message" })
     if message then

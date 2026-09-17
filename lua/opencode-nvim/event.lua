@@ -88,6 +88,11 @@ function M.connected()
   return sse.connected()
 end
 
+--- True once the stream was started at least once.
+function M.started()
+  return sse.started()
+end
+
 function M.status()
   return sse.status()
 end

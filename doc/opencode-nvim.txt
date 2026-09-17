@@ -55,7 +55,7 @@ Com `vim.pack`: >lua
 
 Para desenvolvimento local (aponta direto para o diretório do repositório): >lua
 
-  vim.opt.rtp:prepend("/home/toast/toaster")
+  vim.opt.rtp:prepend("/home/toast/opencode-nvim")
   require("opencode-nvim").setup({})
 <
 
@@ -75,7 +75,8 @@ Sem chamar `setup()`, o plugin se configura sozinho com os valores padrão no
       state_dir = nil,         -- diretório do service.json
     },
     agent = "build",           -- agente padrão das sessões novas
-    model = nil,               -- { id = "...", providerID = "...", variant = "..." }
+    model = nil,               -- nil = o último modelo usado no TUI
+                               -- (ex: { providerID = "opencode-go", id = "deepseek-v4.1-flash" })
     permissions = {            -- regras enviadas na criação da sessão
       edit = "ask",            -- (a beta V2 ignora isso: veja |opencode-nvim-approval|)
       shell = "ask",
@@ -171,6 +172,12 @@ Dentro do painel:
   q, <Esc>	fecha o painel
   <C-c>		interrompe
   gd		diff do último turno
+  r		reenvia a última pergunta
+  G		vai para o fim
+
+Enquanto um turno roda, o painel mostra "▸ pensando…" (que dá lugar ao
+conteúdo assim que ele chega) e o título conta o tempo decorrido ("● 12s").
+Depois de 30s sem nenhum evento, aparece um aviso no painel.
 
 Dentro do prompt:
   <CR>		envia
@@ -320,6 +327,15 @@ Exemplo: >
     `opencode2` está no `PATH`.
   - Se o diff/undo não restaurar arquivos, o diretório não é um repositório
     git (os snapshots do OpenCode usam git).
+  - Se o painel mostrar um erro de provedor ("Error from provider ..."), o
+    problema é da conta/serviço, não do plugin: o motivo exato aparece no
+    painel e `r` reenvia a última pergunta. O free tier do opencode-go oscila e
+    às vezes devolve mensagens enganosas (por exemplo exigindo "OpenCode 1.17.0
+    or newer"); na prática o mesmo modelo volta a funcionar minutos depois.
+  - Se *nenhum* turno roda, confira o modelo. O default do servidor pode ser
+    um modelo de free tier bloqueado (no opencode-go, `opencode/union-alpha`).
+    Sem `model` configurado o plugin usa o último modelo do TUI; para fixar,
+    use `model = { providerID = "...", id = "..." }` ou `<leader>tm`.
 
 Estas divergências do beta V2 já estão tratadas no plugin, mas ajudam a
 entender logs estranhos:

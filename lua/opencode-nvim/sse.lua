@@ -22,6 +22,12 @@ function M.status()
   return state.status
 end
 
+--- True once the stream was started at least once (used to avoid showing
+--- "offline" before the first request).
+function M.started()
+  return state.ever_started == true
+end
+
 function M.connected()
   return state.connected
 end
@@ -109,6 +115,7 @@ function M.start(opts)
   state.generation = state.generation + 1
   local generation = state.generation
   state.status = "connecting"
+  state.ever_started = true
 
   if state.handle then
     pcall(state.handle.close)

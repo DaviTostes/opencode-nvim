@@ -37,7 +37,7 @@ require("opencode-nvim").setup({})
 Desenvolvimento local (aponta para este diretório):
 
 ```lua
-vim.opt.rtp:prepend("/home/toast/toaster")
+vim.opt.rtp:prepend("/home/toast/opencode-nvim")
 require("opencode-nvim").setup({})
 ```
 
@@ -58,7 +58,9 @@ Sem chamar `setup()`, o plugin se configura sozinho no `VimEnter`.
 | `<leader>tu` | desfaz o último turno |
 
 No painel: `i`/`a`/`<CR>` abre o prompt, `q`/`<Esc>` fecha, `<C-c>` interrompe,
-`gd` mostra o diff, `G` volta para o fim.
+`gd` mostra o diff, `r` reenvia a última pergunta (útil quando o provedor
+oscila), `G` volta para o fim. Enquanto o turno roda aparecem "▸ pensando…" e o
+tempo no título (`● 12s`).
 No prompt: `<CR>` envia, `<C-j>` nova linha, `<C-x><C-o>` completa arquivos e
 placeholders, `<Esc>` fecha.
 No popup de diff/permissão: `<CR>` permite uma vez, `a` permite sempre, `n`
@@ -84,6 +86,24 @@ Comandos:
 :OpencodeHealth         checagem ao vivo da conexão
 :OpencodeLog [nível]    nível de log (debug/info/warn/error)
 ```
+
+## Modelo
+
+Por padrão o plugin usa **o mesmo modelo que você usou por último no TUI** (lê
+`~/.local/state/opencode/model.json`). Isso não é só conveniência: o modelo
+*default* do servidor pode ser um modelo de free tier que se recusa a rodar —
+no `opencode-go` o default `opencode/union-alpha` responde
+`OpenCode 1.17.0 or newer is required to use the free tier`, que era a causa do
+"mandei e não aconteceu nada".
+
+Para fixar um modelo:
+
+```lua
+model = { providerID = "opencode-go", id = "deepseek-v4.1-flash" }
+```
+
+Trocar na sessão aberta: `<leader>tm`. Um modelo configurado que não exista no
+catálogo do projeto é descartado com aviso, em vez de quebrar a sessão.
 
 ## Aprovação de edições
 
@@ -191,6 +211,7 @@ código:
 | Num turno normal **não** chega `session.idle` | o fim do turno é `session.execution.succeeded/failed/interrupted` |
 | `session.text.ended` traz o texto completo da parte | o renderer conserta deltas perdidos com ele |
 | Snapshots (diff do turno e restauração de arquivos no revert) usam **git** | o plugin faz fallback pro working tree e avisa quando não é repo |
+| O provedor `opencode-go` oscila e às vezes devolve erros enganosos ("OpenCode 1.17.0 or newer is required to use the free tier", "Endpoint is unavailable") | o motivo real aparece no painel e `r` reenvia a última pergunta |
 
 ## Testes
 

@@ -202,6 +202,66 @@ test("opens the panel window and the prompt", function()
   assert(not panel.visible(), "janela do painel não fechou")
 end)
 
+test("mostra 'pensando…' e troca pelo conteúdo", function()
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  settle()
+  local text = panel_text()
+  assert(text:find("pensando", 1, true), "placeholder ausente:\n" .. text)
+
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "pronto" })
+  feed("session.text.ended", { text = "pronto" })
+  settle()
+  text = panel_text()
+  assert(text:find("pronto", 1, true), text)
+  assert(not text:find("pensando", 1, true), "placeholder não foi removido:\n" .. text)
+end)
+
+test("resolve_model cai para o modelo preferido do TUI", function()
+  local session = require("opencode-nvim.session")
+  local model = session.resolve_model(nil, {})
+  local preferred = session.preferred_model()
+  if preferred then
+    assert(model and model.providerID == preferred.providerID and model.id == preferred.id,
+      vim.inspect(model))
+  else
+    assert(model == nil, "sem preferido não deveria inventar modelo")
+  end
+
+  -- Modelo explícito desconhecido é descartado com motivo.
+  local dropped, reason = session.resolve_model({ providerID = "x", id = "y" },
+    { { providerID = "a", id = "b" } })
+  assert(dropped == nil and reason ~= nil, vim.inspect({ dropped, reason }))
+
+  -- E um conhecido é normalizado pelo catálogo.
+  local known = session.resolve_model({ providerID = "a", id = "b" },
+    { { providerID = "a", id = "b", variant = "v" } })
+  assert(known and known.id == "b" and known.variant == "v", vim.inspect(known))
+end)
+
+test("prompt e painel ficam alinhados e sem sobreposição", function()
+  plugin.open()
+  local pwin, iwin = panel.state.win, panel.state.input.win
+  assert(pwin and iwin, "janelas ausentes")
+  local panel_conf = vim.api.nvim_win_get_config(pwin)
+  local input_conf = vim.api.nvim_win_get_config(iwin)
+
+  -- Both content areas must share the same left edge.
+  local panel_left = panel_conf.col - panel_conf.width + 1
+  assert(input_conf.col == panel_left,
+    string.format("bordas esquerdas diferentes: painel=%d prompt=%d", panel_left, input_conf.col))
+
+  -- The prompt sits below the panel (anchors: SE for the panel, SW for the
+  -- prompt), with the borders not touching.
+  local panel_outer_bottom = panel_conf.row + 1
+  local input_outer_top = input_conf.row - 1
+  assert(input_outer_top > panel_outer_bottom,
+    string.format("prompt sobrepõe o painel: prompt_top=%d painel_bottom=%d", input_outer_top, panel_outer_bottom))
+  plugin.close()
+end)
+
 test("submitting goes back to the code window", function()
   local target = panel.code_target()
   assert(target and target.win, "não achei uma janela de código")

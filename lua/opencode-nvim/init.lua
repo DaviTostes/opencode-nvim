@@ -230,47 +230,19 @@ function M.select_session()
   end)
 end
 
-local function collect_models(node, out, provider, depth)
-  depth = depth or 0
-  if depth > 4 or type(node) ~= "table" then return out end
-
-  local id = node.id or node.modelID
-  local model_provider = node.providerID or node.provider or provider
-  if type(id) == "string" and type(model_provider) == "string" then
-    out[#out + 1] = {
-      id = id,
-      providerID = model_provider,
-      variant = node.variant,
-      name = node.name,
-    }
-    return out
-  end
-
-  if type(node.models) == "table" then
-    return collect_models(node.models, out, node.id or node.providerID or provider, depth + 1)
-  end
-  for key, value in pairs(node) do
-    if type(value) == "table" then
-      collect_models(value, out, type(key) == "string" and key or provider, depth + 1)
-    end
-  end
-  return out
-end
-
 function M.select_model()
   local info = session.info()
   if not info then return log.notify("nenhuma sessão ativa") end
   local directory = info.location and info.location.directory or nil
-  api.models(directory, function(err, catalog)
+  session.models_for(directory, function(err, models)
     if err then return fail("modelos", err) end
-    local seen, items, map = {}, {}, {}
-    for _, model in ipairs(collect_models(catalog, {})) do
+    local items, map = {}, {}
+    for _, model in ipairs(models or {}) do
       local label = string.format("%s/%s", model.providerID, model.id)
-      if not seen[label] then
-        seen[label] = true
-        local suffix = model.variant and (" · " .. model.variant) or ""
-        items[#items + 1] = label .. suffix
-        map[label .. suffix] = model
+      if model.variant then label = label .. " · " .. model.variant end
+      if not map[label] then
+        items[#items + 1] = label
+        map[label] = model
       end
     end
     table.sort(items)

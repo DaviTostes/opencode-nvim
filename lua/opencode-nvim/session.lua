@@ -1,5 +1,6 @@
 local api = require("opencode-nvim.api")
 local cfg = require("opencode-nvim.config")
+local discovery = require("opencode-nvim.discovery")
 local event = require("opencode-nvim.event")
 local log = require("opencode-nvim.log")
 local sse = require("opencode-nvim.sse")
@@ -150,12 +151,115 @@ function M.approval_active()
   return M.current ~= nil and M.current.approval == true
 end
 
-local function create_session(directory, agent, opts, retry, cb)
-  log.debug("criando sessão em", directory, "agente", tostring(agent))
+--------------------------------------------------------------------------------
+-- Models
+--------------------------------------------------------------------------------
+
+local models_cache = {}
+
+--- Flattens the model catalogue into `{ providerID, id, variant, name }` entries.
+---@param node any
+---@return table[]
+function M.flatten_models(node)
+  local out, seen = {}, {}
+  local function walk(value, provider, depth)
+    if depth > 4 or type(value) ~= "table" then return end
+    local id = value.id or value.modelID
+    local model_provider = value.providerID or value.provider or provider
+    if type(id) == "string" and type(model_provider) == "string" then
+      local key = model_provider .. "/" .. id .. "/" .. tostring(value.variant or "")
+      if not seen[key] then
+        seen[key] = true
+        out[#out + 1] = {
+          id = id,
+          providerID = model_provider,
+          variant = value.variant,
+          name = value.name,
+        }
+      end
+      return
+    end
+    if type(value.models) == "table" then
+      return walk(value.models, value.id or value.providerID or provider, depth + 1)
+    end
+    for key, item in pairs(value) do
+      if type(item) == "table" then
+        walk(item, type(key) == "string" and key or provider, depth + 1)
+      end
+    end
+  end
+  walk(node, nil, 0)
+  return out
+end
+
+--- Model catalogue of a directory (cached).
+---@param cb fun(err: any, models: table[]?)
+function M.models_for(directory, cb)
+  if models_cache[directory] then return cb(nil, models_cache[directory]) end
+  api.models(directory, function(err, catalog)
+    if err then return cb(err, nil) end
+    local models = M.flatten_models(catalog)
+    if #models > 0 then models_cache[directory] = models end
+    cb(nil, models)
+  end)
+end
+
+--- The model the user last used (same state file the TUI keeps).
+---
+--- Without this the server falls back to its default model, which for
+--- `opencode-go` accounts can be a free tier model that refuses to run.
+---@return table? Model.Ref
+function M.preferred_model()
+  local path = vim.fs.joinpath(discovery.state_dir(), "model.json")
+  local ok, lines = pcall(vim.fn.readfile, path)
+  if not ok or type(lines) ~= "table" or #lines == 0 then return nil end
+  local data = util.decode(table.concat(lines, "\n"))
+  local recent = type(data) == "table" and data.recent or nil
+  if type(recent) ~= "table" then return nil end
+  for _, item in ipairs(recent) do
+    local provider = item.providerID or item.provider
+    local id = item.modelID or item.id
+    if type(provider) == "string" and type(id) == "string" then
+      return { providerID = provider, id = id, variant = item.variant }
+    end
+  end
+  return nil
+end
+
+--- Resolves the model for a new session: explicit config wins, then the last
+--- model used in the TUI, then the server default.
+---@return table? model
+---@return string? reason why a candidate was dropped
+function M.resolve_model(explicit, catalog)
+  -- NOTE: build the list by appending, never `{ nil, nil, preferred }`:
+  -- `ipairs` stops at the first nil and the candidates would be skipped.
+  local candidates = {}
+  if explicit ~= nil then candidates[#candidates + 1] = explicit end
+  if cfg.get().model ~= nil then candidates[#candidates + 1] = cfg.get().model end
+  local preferred = M.preferred_model()
+  if preferred ~= nil then candidates[#candidates + 1] = preferred end
+
+  for _, candidate in ipairs(candidates) do
+    if type(candidate) == "table" and candidate.providerID and candidate.id then
+      if not catalog or #catalog == 0 then return candidate end
+      for _, known in ipairs(catalog) do
+        if known.id == candidate.id and known.providerID == candidate.providerID then
+          return { providerID = known.providerID, id = known.id, variant = candidate.variant or known.variant }
+        end
+      end
+      return nil, string.format("%s/%s não está disponível", candidate.providerID, candidate.id)
+    end
+  end
+  return nil
+end
+
+local function create_session(directory, agent, model, opts, retry, cb)
+  log.debug("criando sessão em", directory, "agente", tostring(agent),
+    "modelo", model and (model.providerID .. "/" .. model.id) or "padrão do servidor")
   api.create_session({
     location = { directory = directory },
     agent = agent,
-    model = opts.model or cfg.get().model,
+    model = model,
     permissions = cfg.permission_ruleset(),
     title = opts.title,
   }, function(err, info)
@@ -163,7 +267,7 @@ local function create_session(directory, agent, opts, retry, cb)
       if agent and not retry then
         -- A per-project agent may not exist for this directory yet.
         log.debug("agente", agent, "recusado:", vim.inspect(err))
-        return create_session(directory, nil, opts, true, cb)
+        return create_session(directory, nil, model, opts, true, cb)
       end
       return cb(err)
     end
@@ -234,9 +338,17 @@ function M.ensure(opts, cb)
     agent = approval.agent
   end
 
-  create_session(directory, agent, opts, false, function(err, info)
-    if err then return cb(err) end
-    finalize_agent(info, cb)
+  api.ensure_location(directory, function()
+    M.models_for(directory, function(_, catalog)
+      local model, dropped = M.resolve_model(opts.model, catalog)
+      if dropped then
+        log.warn(dropped .. " — usando o modelo padrão do servidor")
+      end
+      create_session(directory, agent, model, opts, false, function(err, info)
+        if err then return cb(err) end
+        finalize_agent(info, cb)
+      end)
+    end)
   end)
 end
 

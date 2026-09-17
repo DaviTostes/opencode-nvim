@@ -33,6 +33,19 @@ local function wait(condition, timeout)
   return vim.wait(timeout or 20000, condition, 30)
 end
 
+--- The provider (not the plugin) can be unavailable: opencode-go's free tier
+--- started rejecting the V2 beta with a version gate. Treat that as a skip so
+--- the suite does not report a plugin bug when the account cannot run turns.
+local provider_errors = {}
+local function note_provider_error(text)
+  for line in tostring(text):gmatch("[^\n]+") do
+    if line:find("Error from provider", 1, true) or line:find("is required to use", 1, true)
+      or line:find("Endpoint is unavailable", 1, true) then
+      provider_errors[#provider_errors + 1] = vim.trim(line)
+    end
+  end
+end
+
 plugin.setup({ keymaps = { enabled = true }, agent = "plan" })
 event.start()
 
@@ -106,7 +119,10 @@ while not state.finished and attempts < 3 do
     io.write(string.format("   turno falhou sem texto (tentativa %d), repetindo...\n", attempts))
     local panel_text = table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), "\n")
     for line in panel_text:gmatch("[^\n]+") do
-      if line:find("⚠", 1, true) then io.write("     motivo: " .. line .. "\n") end
+      if line:find("⚠", 1, true) then
+        io.write("     motivo: " .. line .. "\n")
+        note_provider_error(line)
+      end
     end
     state.finished = false
     state.deltas = 0
@@ -118,11 +134,18 @@ while not state.finished and attempts < 3 do
 end
 
 report("o turno terminou", state.finished, "timeout")
-report("recebeu deltas de texto", state.deltas > 0, "nenhum session.text.delta")
 
 local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), "\n")
 io.write("--- painel ---\n" .. text:sub(1, 700) .. "\n--------------\n")
-report("a resposta apareceu no painel", text:find("tchau", 1, true) ~= nil, text:sub(1, 300))
+note_provider_error(text)
+
+if state.deltas == 0 and #provider_errors > 0 then
+  io.write("SKIP - streaming/resposta: o provedor recusou o turno, não é bug do plugin\n")
+  io.write("       " .. provider_errors[1] .. "\n")
+else
+  report("recebeu deltas de texto", state.deltas > 0, "nenhum session.text.delta")
+  report("a resposta apareceu no painel", text:find("tchau", 1, true) ~= nil, text:sub(1, 300))
+end
 
 local cleaned = false
 require("opencode-nvim.api").delete_session(session.id(), function() cleaned = true end)

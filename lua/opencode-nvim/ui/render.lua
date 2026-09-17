@@ -170,6 +170,19 @@ function R:block(kind, text)
   self:flush()
 end
 
+--- Removes the last line when it is exactly `text` (used to take back the
+--- "thinking" placeholder).
+---@return boolean removed
+function R:drop_last(text)
+  if #self.lines == 0 or self.lines[#self.lines] ~= text then return false end
+  self.lines[#self.lines] = nil
+  self.kinds[#self.kinds] = nil
+  self.committed = math.min(self.committed, #self.lines)
+  self.drawn = math.min(self.drawn, #self.lines)
+  self:draw()
+  return true
+end
+
 function R:user(text)
   self:finalize()
   local lines = util.lines(text or "")
