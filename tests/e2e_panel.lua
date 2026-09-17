@@ -46,7 +46,7 @@ local function note_provider_error(text)
   end
 end
 
-plugin.setup({ keymaps = { enabled = true }, agent = "plan" })
+plugin.setup({ keymaps = { enabled = true, toggle = "<F9>" }, agent = "plan" })
 
 local state = { finished = false, deltas = 0 }
 event.on_any(function(ev)
@@ -74,11 +74,11 @@ vim.bo.filetype = "lua"
 local code_win = vim.api.nvim_get_current_win()
 vim.api.nvim_win_set_cursor(code_win, { 1, 0 })
 
--- 1. The keymap opens the panel + prompt.
-vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Space>ta", true, false, true), "x", false)
+-- 1. The configured keymap opens the panel + prompt.
+vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F9>", true, false, true), "x", false)
 vim.wait(600, function() return false end, 50)
 
-report("the keymap opened the panel", panel.visible(), "panel is not visible")
+report("the configured keymap opened the panel", panel.visible(), "panel is not visible")
 report("the prompt opened focused", panel.state.input.win ~= nil
   and vim.api.nvim_get_current_win() == panel.state.input.win,
   string.format("input.win=%s current=%s", tostring(panel.state.input.win), tostring(vim.api.nvim_get_current_win())))

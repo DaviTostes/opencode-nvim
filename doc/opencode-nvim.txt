@@ -9,7 +9,7 @@ CONTENTS					*opencode-nvim-contents*
   4. Configuration ............................... |opencode-nvim-config|
   4b. Daily use ................................. |opencode-nvim-daily|
   5. Commands .................................... |opencode-nvim-commands|
-  6. Keymaps ..................................... |opencode-nvim-keymaps|
+  6. Keymaps (none are set by default) ........... |opencode-nvim-keymaps|
   7. Context (@this, @buffer, ...) ............... |opencode-nvim-context|
   8. Approval and diff ........................... |opencode-nvim-approval|
   9. Lua API ..................................... |opencode-nvim-api|
@@ -105,18 +105,11 @@ Without calling `setup()` the plugin configures itself with the defaults on
       focus_after_submit = "input",  -- "code" | "panel" | "input"
       escape_closes = "all",       -- <Esc> in the prompt closes the panel too
     },
-    keymaps = {
-      enabled = true,
-      toggle = "<leader>tt",
-      ask = "<leader>ta",
-      ask_buffer = "<leader>tA",
-      sessions = "<leader>ts",
-      models = "<leader>tm",
-      agents = "<leader>tg",
-      diff = "<leader>td",
-      interrupt = "<leader>tx",
-      undo = "<leader>tu",
-      events = "<leader>te",
+    keymaps = {                -- none are set unless enabled = true
+      enabled = false,
+      toggle = nil, ask = nil, ask_buffer = nil, edit = nil, actions = nil,
+      sessions = nil, models = nil, agents = nil, diff = nil,
+      interrupt = nil, undo = nil, events = nil,
     },
     log = { level = "warn", file = nil },
   })
@@ -155,8 +148,16 @@ reloads keeping your cursor, and `u` still undoes it.
 
 :Opencode					*:Opencode*
 	Open/close the panel and focus the prompt.
+:OpencodeClose					*:OpencodeClose*
+	Close the panel.
 :OpencodeAsk [text]				*:OpencodeAsk*
-	Open the prompt pre-filled. From a selection it includes `@this`.
+	Ask, with the prompt pre-filled when `text` is given. Accepts a range:
+	from a visual selection use `:'<,'>OpencodeAsk` and the selection is sent
+	together with the editor context.
+:OpencodeResend					*:OpencodeResend*
+	Send the last prompt again (the provider hiccups often).
+:OpencodeClear					*:OpencodeClear*
+	Clear the panel.
 :OpencodeNew					*:OpencodeNew*
 	Start a new session in the current directory.
 :OpencodeAttach {id}				*:OpencodeAttach*
@@ -176,8 +177,8 @@ reloads keeping your cursor, and `u` still undoes it.
 :OpencodeActions				*:OpencodeActions*
 	Pick a ready-made action and pre-fill the prompt with it.
 :OpencodeEdit					*:OpencodeEdit*
-	Ask for a change in the current selection (or file), through the
-	normal approval flow.
+	Ask for a change in the selection (or file) through the normal approval
+	flow. Accepts a range: `:'<,'>OpencodeEdit` uses the visual selection.
 :OpencodeApproval				*:OpencodeApproval*
 	Show which agents ask for approval and how the setup looks.
 :OpencodeApprovalAgent				*:OpencodeApprovalAgent*
@@ -197,18 +198,32 @@ reloads keeping your cursor, and `u` still undoes it.
 ==============================================================================
 6. Keymaps					*opencode-nvim-keymaps*
 
-  <leader>tt	toggle the panel
-  <leader>ta	ask (visual: uses the selection as `@this`)
-  <leader>tA	ask with `@buffer`
-  <leader>ts	pick a session
-  <leader>tm	pick a model
-  <leader>tg	pick an agent
-  <leader>td	diff of the last turn
-  <leader>tx	interrupt
-  <leader>tu	undo the last turn
-  <leader>te	events
-  <leader>tc	pick a ready-made action
-  <leader>ti	edit this (selection or file) with an instruction
+The plugin sets **no keymaps** on its own: every action is a command (see
+|opencode-nvim-commands|). If you want keys, list exactly the ones you want —
+only the keys present in the table are mapped, and `vim.g.mapleader` must be
+set before `setup()` runs: >lua
+
+  vim.g.mapleader = " " -- before setup()
+  require("opencode-nvim").setup({
+    keymaps = {
+      enabled = true,
+      toggle = "<leader>tt",
+      ask = "<leader>ta",
+      ask_buffer = "<leader>tA",
+      edit = "<leader>ti",
+      actions = "<leader>tc",
+      diff = "<leader>td",
+      interrupt = "<leader>tx",
+      undo = "<leader>tu",
+      sessions = "<leader>ts",
+      models = "<leader>tm",
+      agents = "<leader>tg",
+      events = "<leader>te",
+    },
+  })
+<
+Keys that exist only inside the plugin's own buffers (they cannot conflict with
+your config):
 
 Inside the panel:
   i, a, <CR>	open the prompt
@@ -217,49 +232,26 @@ Inside the panel:
   gd		diff of the last turn
   r		resend the last prompt
   G		go to the end
-
-While a turn is running the panel shows "▸ thinking…" (which gives way to the
-content as soon as it arrives) and the title counts the elapsed time
-("● 12s"). After 30s without any event a warning shows up in the panel naming
-the last event of the session (use |:OpencodeDoctor| to dig further).
-
-How the panel reads: >
-
-  ❯ your message
-
-  ▸ thinking (12 lines, zo opens)      reasoning, folded by default
-  ▸ read /path/to/file ✓               tool call and its status
-  the answer text                      plain text, no gutter
-<
-Reasoning is folded (zo opens one block, zR opens all) and guttered with "│ ",
-so it stays distinguishable from the answer when expanded. Each new turn is
-separated by a blank line, and after sending the prompt stays open for the next
-message (see `ui.focus_after_submit`).
+  zo, zR	open a folded reasoning block (or all of them)
 
 Inside the prompt:
   <CR>		send
   <C-j>		newline
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
-  <Esc>		close the prompt and the panel (ui.escape_closes)
+  <Esc>		close the prompt and the panel (see `ui.escape_closes`)
   <C-c>		cancel the current turn
 
-Closing the UI: <Esc> in the prompt, q or <Esc> in the panel, or the toggle
-(`:Opencode` / <leader>tt). `ui.escape_closes = "input"` makes <Esc> close only
-the prompt.
-
-In the permission/diff popup:
+In the popups:
   <CR>, y	allow once
   A		allow always (saves the rule)
   x		reject (with an optional message)
-  <Esc>, q	decide later (the execution stays paused)
+  <Esc>, q	decide later / close
+  u		undo the turn (in the review popup)
 
-In the turn review popup:
-  <CR>		keep the changes
-  u		undo the turn
+Popups are ordinary buffers: j/k, <C-d>/<C-u>, /, gg/G and yanking work, and the
+keys are always listed in the float footer.
 
-These popups are ordinary buffers: j/k, <C-d>/<C-u>, /, gg/G and yanking all
-work (the actions avoid those keys) and the available keys are always shown in
-the float footer.
+Closing the UI: <Esc> in the prompt, q or <Esc> in the panel, or `:Opencode`.
 
 ==============================================================================
 7. Context					*opencode-nvim-context*

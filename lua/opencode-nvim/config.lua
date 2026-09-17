@@ -63,20 +63,23 @@ M.defaults = {
     focus_after_submit = "input", -- "code" | "panel" | "input"
     escape_closes = "all", -- <Esc> in the prompt closes the panel too ("input" keeps it)
   },
+  -- No keymaps are created unless you ask for them: set `enabled = true` and
+  -- the keys you want. Commands cover every action (see :help opencode-nvim).
+  -- NOTE: `vim.g.mapleader` must be set before setup() for `<leader>...`.
   keymaps = {
-    enabled = true,
-    toggle = "<leader>tt",
-    ask = "<leader>ta",
-    ask_buffer = "<leader>tA",
-    sessions = "<leader>ts",
-    models = "<leader>tm",
-    agents = "<leader>tg",
-    diff = "<leader>td",
-    interrupt = "<leader>tx",
-    undo = "<leader>tu",
-    events = "<leader>te",
-    actions = "<leader>tc",
-    edit = "<leader>ti",
+    enabled = false,
+    toggle = nil,
+    ask = nil,
+    ask_buffer = nil,
+    edit = nil,
+    actions = nil,
+    sessions = nil,
+    models = nil,
+    agents = nil,
+    diff = nil,
+    interrupt = nil,
+    undo = nil,
+    events = nil,
   },
   log = { level = "warn", file = nil },
 }

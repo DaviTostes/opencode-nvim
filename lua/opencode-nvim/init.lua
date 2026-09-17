@@ -73,8 +73,8 @@ function M.create_commands()
   command("Opencode", function() M.toggle() end, { desc = "toggle the opencode panel" })
   command("OpencodeAsk", function(args)
     local prefill = args.args ~= "" and args.args or nil
-    M.ask(prefill)
-  end, { nargs = "*", desc = "ask opencode" })
+    M.ask(prefill, M.range_from_args(args))
+  end, { nargs = "*", range = true, desc = "ask opencode (range: uses the selection)" })
   command("OpencodeNew", function() M.new_session() end, { desc = "new opencode session" })
   command("OpencodeAttach", function(args)
     session.attach(args.args, function(err)
@@ -90,10 +90,15 @@ function M.create_commands()
   command("OpencodeApprovalAgent", function() M.setup_approval_agent() end, { desc = "create the approval agent in the OpenCode config" })
   command("OpencodeDiff", function() M.diff() end, { desc = "diff of the last turn" })
   command("OpencodeActions", function() M.choose_action() end, { desc = "pick a ready-made action" })
-  command("OpencodeEdit", function() M.edit_this() end, { desc = "ask for a change in the current selection" })
+  command("OpencodeEdit", function(args)
+    M.edit_this(M.range_from_args(args))
+  end, { range = true, desc = "ask for a change in the selection (or file)" })
   command("OpencodePermissions", function() permission.select() end, { desc = "pending permissions" })
   command("OpencodeEvents", function() M.events() end, { desc = "events received from the server" })
   command("OpencodeHealth", function() M.health() end, { desc = "check the connection to opencode" })
+  command("OpencodeClose", function() M.close() end, { desc = "close the panel" })
+  command("OpencodeResend", function() M.resend() end, { desc = "send the last prompt again" })
+  command("OpencodeClear", function() M.clear() end, { desc = "clear the panel" })
   command("OpencodeDoctor", function() M.doctor() end, { desc = "diagnose a turn that never answers" })
   command("OpencodeLog", function(args)
     local level = util.trim(args.args)
@@ -109,42 +114,33 @@ end
 
 function M.create_keymaps()
   local keys = cfg.get().keymaps or {}
-  if keys.enabled == false then return end
+  if keys.enabled ~= true then return end
 
   local function map(mode, lhs, rhs, desc)
     if type(lhs) ~= "string" or lhs == "" then return end
     vim.keymap.set(mode, lhs, rhs, { desc = "opencode: " .. desc, silent = true })
   end
 
-  map({ "n", "x" }, keys.toggle, function() M.toggle() end, "toggle panel")
+  map({ "n", "x" }, keys.toggle, function() M.toggle() end, "toggle the panel")
+  local function in_visual()
+    return vim.fn.mode():find("[vV\22]") ~= nil
+  end
+
   map({ "n", "x" }, keys.ask, function()
-    if vim.fn.mode():find("[vV\22]") then
-      local first, last = vim.fn.line("v"), vim.fn.line(".")
-      if first > last then first, last = last, first end
-      local bufnr = vim.api.nvim_get_current_buf()
-      M.ask(nil, { bufnr = bufnr, first = first, last = last })
-    else
-      M.ask()
-    end
+    M.ask(nil, in_visual() and M.selection_range() or nil)
   end, "ask")
   map({ "n", "x" }, keys.ask_buffer, function() M.ask("@buffer ") end, "ask with the buffer")
+  map({ "n", "x" }, keys.edit, function()
+    M.edit_this(in_visual() and M.selection_range() or nil)
+  end, "edit this")
+  map({ "n", "x" }, keys.actions, function() M.choose_action() end, "pick an action")
   map("n", keys.sessions, function() M.select_session() end, "sessions")
   map("n", keys.models, function() M.select_model() end, "model")
   map("n", keys.agents, function() M.select_agent() end, "agent")
-  map("n", keys.diff, function() M.diff() end, "turn diff")
+  map("n", keys.diff, function() M.diff() end, "diff of the last turn")
   map("n", keys.interrupt, function() M.interrupt() end, "interrupt")
-  map("n", keys.undo, function() M.undo() end, "undo turn")
+  map("n", keys.undo, function() M.undo() end, "undo the last turn")
   map({ "n", "x" }, keys.events, function() M.events() end, "events")
-  map({ "n", "x" }, keys.actions, function() M.choose_action() end, "pick an action")
-  map({ "n", "x" }, keys.edit, function()
-    if vim.fn.mode():find("[vV\22]") then
-      local first, last = vim.fn.line("v"), vim.fn.line(".")
-      if first > last then first, last = last, first end
-      M.edit_this({ bufnr = vim.api.nvim_get_current_buf(), first = first, last = last })
-    else
-      M.edit_this()
-    end
-  end, "edit this with an instruction")
 end
 
 --------------------------------------------------------------------------------
@@ -199,6 +195,24 @@ function M.ask(prefill, selection)
   panel.open({ prefill = prefill, selection = selection })
 end
 
+--- Selection opened by a `:Opencode...` command used with a range (from visual
+--- mode). Returns nil when the command was used without a range.
+--- Range of the current visual selection (used by keymaps in visual mode).
+---@return { bufnr: integer, first: integer, last: integer }?
+function M.selection_range()
+  local first, last = vim.fn.line("v"), vim.fn.line(".")
+  if first == 0 or last == 0 then return nil end
+  if first > last then first, last = last, first end
+  return { bufnr = vim.api.nvim_get_current_buf(), first = first, last = last }
+end
+
+---@param args table command args from nvim_create_user_command
+---@return { bufnr: integer, first: integer, last: integer }?
+function M.range_from_args(args)
+  if not args or not args.range or args.range == 0 then return nil end
+  return { bufnr = vim.api.nvim_get_current_buf(), first = args.line1, last = args.line2 }
+end
+
 ---@param text string
 ---@param opts? { delivery?: string, new_session?: boolean }
 function M.prompt(text, opts)
@@ -208,6 +222,12 @@ end
 
 function M.interrupt()
   session.interrupt()
+end
+
+--- Send the last prompt again (the provider hiccups often).
+function M.resend()
+  M._autosetup()
+  panel.retry()
 end
 
 function M.diff()

@@ -517,6 +517,68 @@ test("prompt and panel are aligned and do not overlap", function()
   plugin.close()
 end)
 
+test("no keymaps are created unless asked for", function()
+  local before = #vim.api.nvim_get_keymap("n")
+  plugin.setup({}) -- defaults: no keymaps
+  assert(#vim.api.nvim_get_keymap("n") == before,
+    "setup() created keymaps by default")
+
+  -- and only the requested ones when enabled
+  plugin.setup({ keymaps = { enabled = true, toggle = "<F9>" } })
+  -- NOTE: maparg wants the key notation ("<F9>"), not the raw termcodes
+  local function mapping(key)
+    return vim.fn.maparg(key, "n", false, true)
+  end
+  local found = mapping("<F9>")
+  assert(type(found) == "table" and found.desc ~= nil, "the requested keymap was not created")
+  assert(vim.tbl_isempty(mapping("<F8>")), "an unrequested keymap was created")
+
+  -- every action is reachable as a command
+  for _, name in ipairs({
+    "Opencode", "OpencodeClose", "OpencodeAsk", "OpencodeEdit", "OpencodeActions",
+    "OpencodeNew", "OpencodeAttach", "OpencodeSessions", "OpencodeModels", "OpencodeAgents",
+    "OpencodeInterrupt", "OpencodeResend", "OpencodeUndo", "OpencodeDiff", "OpencodeClear",
+    "OpencodeApproval", "OpencodeApprovalAgent", "OpencodePermissions",
+    "OpencodeEvents", "OpencodeDoctor", "OpencodeHealth", "OpencodeLog",
+  }) do
+    assert(vim.fn.exists(":" .. name) == 2, "missing command :" .. name)
+  end
+
+  -- a range (visual mode) is understood by the commands that take one
+  local range_info = vim.api.nvim_get_commands({}).OpencodeAsk
+  assert(range_info and range_info.range ~= nil and range_info.range ~= "",
+    "OpencodeAsk does not accept a range: " .. vim.inspect(range_info and range_info.range))
+  plugin.setup({})
+end)
+
+test("a ranged command sends the selection", function()
+  local work = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(work, vim.fs.joinpath(vim.uv.cwd(), "range.lua"))
+  vim.api.nvim_buf_set_lines(work, 0, -1, false, { "line one", "line two" })
+  vim.api.nvim_set_current_buf(work)
+  vim.api.nvim_buf_set_mark(work, "<", 1, 1, {})
+  vim.api.nvim_buf_set_mark(work, ">", 2, 1, {})
+
+  vim.cmd("'<,'>OpencodeAsk hello")
+  settle()
+  assert(panel.state.input.win ~= nil, "the prompt did not open")
+  local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.input.buf, 0, -1, false), "\n")
+  assert(text:find("hello", 1, true), "the argument was lost: " .. text)
+  local selection = panel.state.input.selection
+  assert(selection and selection.first == 1 and selection.last == 2,
+    "the range was not passed: " .. vim.inspect(selection))
+
+  -- without a range there is no selection
+  panel.close_input()
+  vim.cmd("OpencodeAsk no-range")
+  settle()
+  assert(panel.state.input.selection == nil,
+    "a selection appeared without a range: " .. vim.inspect(panel.state.input.selection))
+
+  plugin.close()
+  vim.api.nvim_buf_delete(work, { force = true })
+end)
+
 test("<Esc> in the prompt leaves the whole UI", function()
   local cfg = require("opencode-nvim.config")
 

@@ -23,7 +23,6 @@ local state = {
   renderer = nil,
   status = "idle",
   autoscroll = true,
-  last_selection = nil,
   model = nil,
   geom = nil,
   session_id = nil,
@@ -342,7 +341,6 @@ function M.open(opts)
   opts = opts or {}
   ensure_win()
   M.update_title()
-  if opts.selection then state.last_selection = opts.selection end
   if opts.input ~= false then
     M.open_input(opts.prefill, opts.selection)
   end
@@ -503,10 +501,10 @@ end
 function M.open_input(prefill, selection)
   local target = M.code_target()
   state.input.target = target
-  state.input.selection = selection or state.last_selection
-  if not state.input.selection then
-    state.input.selection = context.selection()
-  end
+  -- Only an explicit selection counts (visual keymap or a ranged command):
+  -- reusing the previous selection or the `'<`/`'>` marks made old selections
+  -- leak into prompts that did not ask for one.
+  state.input.selection = selection
   state.input.saved_win = vim.api.nvim_get_current_win()
 
   local buf = M.input_buf()
