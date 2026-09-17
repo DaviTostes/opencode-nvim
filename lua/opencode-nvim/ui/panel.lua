@@ -47,17 +47,30 @@ local state = {
 
 M.state = state
 
---- Fold expression: reasoning lines (prefixed with the gutter) form one fold.
-function _G.opencode_nvim_foldexpr(lnum)
-  local line = vim.fn.getline(lnum)
-  if line:sub(1, #GUTTER) == GUTTER then return 1 end
-  return 0
-end
-
---- Fold text for a collapsed reasoning block.
-function _G.opencode_nvim_foldtext()
-  local count = vim.v.foldend - vim.v.foldstart + 1
-  return string.format("%s (%d lines, zo opens) ", THINKING_HEADER, count)
+--- Collapses a finished reasoning block with a *manual* fold.
+---
+--- Folds are created once, when the block ends, instead of using `foldexpr`,
+--- which runs on every redraw (a fragile place to evaluate Lua, and one that
+--- cannot be exercised by the headless tests).
+local function fold_reasoning(renderer)
+  if (cfg.get().ui.panel or {}).folds == false then return end
+  local block = renderer:last_block()
+  if block.kind ~= "dim" or not block.first or not block.last then return end
+  if block.last <= block.first then return end
+  local win = state.win
+  if not (win and vim.api.nvim_win_is_valid(win)) then return end
+  -- Write the block out first: a pending debounced draw would rewrite those
+  -- lines right after the fold and drop it.
+  renderer:draw()
+  pcall(vim.api.nvim_win_call, win, function()
+    -- `:fold` *closes*; the way to create one from a script is `zf` over a
+    -- visual range. Restoring the view with winrestview would reopen the fold,
+    -- so the panel just goes back to following the end of the buffer.
+    pcall(vim.cmd, string.format("normal! %dGV%dGzf", block.first, block.last))
+    pcall(vim.cmd, "normal! zc")
+  end)
+  state.autoscroll = true
+  M.scroll_soon()
 end
 
 local function err_text(err)
@@ -324,11 +337,9 @@ local function ensure_win()
   vim.wo[state.win].foldcolumn = "0"
   vim.wo[state.win].winhighlight = "Normal:OpencodeNormal,FloatBorder:OpencodeBorder,FloatTitle:OpencodeTitle"
   if (cfg.get().ui.panel or {}).folds ~= false then
-    -- Reasoning lines carry the gutter, so they can be folded as a block
-    -- (closed by default: `zo` opens one).
-    vim.wo[state.win].foldmethod = "expr"
-    vim.wo[state.win].foldexpr = "v:lua.opencode_nvim_foldexpr(v:lnum)"
-    vim.wo[state.win].foldtext = "v:lua.opencode_nvim_foldtext()"
+    -- Manual folds: `fold_reasoning` creates one per reasoning block when the
+    -- block ends (zo opens, zR opens all).
+    vim.wo[state.win].foldmethod = "manual"
     vim.wo[state.win].foldlevel = 0
     vim.wo[state.win].foldenable = true
   end
@@ -909,6 +920,7 @@ function M.on_event(ev)
     renderer:stream("dim", event_text(data) or "", GUTTER)
   elseif kind == "session.reasoning.ended" then
     renderer:finalize()
+    fold_reasoning(renderer)
   elseif kind == "session.tool.input.started" then
     -- Deferred: rendering now would split the reasoning around the call.
     clear_stall(renderer)

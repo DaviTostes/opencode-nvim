@@ -1,14 +1,13 @@
 # opencode-nvim
 
-Drive OpenCode from inside Neovim without leaving your code. The panel is a
-float in the bottom-right corner that **does not steal focus**: answers stream
-there while you keep reading and editing.
+Drive OpenCode from Neovim. The panel floats bottom-right and **does not steal
+focus**: answers stream while you keep editing.
 
 - Streaming text, reasoning and tool calls
-- Edits go through a diff you approve inside Neovim
-- Buffers the AI changes reload on their own, keeping the cursor
-- Every prompt carries your editor context (file, cursor, selection, diagnostics)
-- Sessions are shared with the `opencode2` TUI
+- Edits via a diff you approve in Neovim
+- Changed buffers reload on their own, keeping the cursor
+- Prompts carry editor context (file, cursor, selection, diagnostics)
+- Sessions shared with the `opencode2` TUI
 - No dependencies, **no keymaps**: everything is a command
 
 ## Requirements
@@ -98,13 +97,15 @@ require("opencode-nvim").setup({
 - **A turn that never answers.** The panel counts the elapsed time and warns at
   30s showing the last event of that session. `<C-c>` interrupts, `r` in the
   panel (or `:OpencodeResend`) sends again, and `:OpencodeDoctor` prints the
-  server, the stream, the session state and the last events.
+  server, the stream, the session state, the last events and the last nvim
+  error (`:messages` has the full history).
 - **Pick a good model.** The plugin uses the model you last used in the TUI. The
   server default can be a free-tier model that refuses to run; pin one with
   `model = { providerID = "...", id = "..." }` or pick it live with
   `:OpencodeModels`.
-- **Reasoning is folded.** Blocks read `▸ thinking (12 lines, zo opens)`; `zo`
-  opens one, `zR` opens all. Answers are never buried in thinking.
+- **Reasoning is folded.** Each reasoning run shows a `▸ thinking` header with
+  the block folded right below it; `zo` opens one, `zR` opens all. Answers are
+  never buried in thinking.
 - **Share with the TUI.** `:OpencodeSessions` (or `:OpencodeAttach ses_...`)
   attaches to any session, including one already running in the terminal.
 - **In the panel:** `i`/`a`/`<CR>` prompt · `q`/`<Esc>` close · `<C-c>`

@@ -357,22 +357,18 @@ test("reasoning gets a header, a gutter and a fold", function()
   assert(text:find("│ about this", 1, true), "second reasoning line lost the gutter:\n" .. text)
   assert(not text:find("▸ thinking…", 1, true), "the placeholder was not replaced:\n" .. text)
 
-  -- the gutter is what the fold expression keys on (evaluated with the panel
-  -- buffer as current, like Neovim does per window)
   local buf = panel.state.buf
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local first_gutter
-  vim.api.nvim_buf_call(buf, function()
-    for index, line in ipairs(lines) do
-      local expected = line:sub(1, #"│ ") == "│ " and 1 or 0
-      if expected == 1 and not first_gutter then first_gutter = index end
-      assert(_G.opencode_nvim_foldexpr(index) == expected,
-        string.format("foldexpr(%d) for %q", index, line))
-    end
-  end)
+  for index, line in ipairs(lines) do
+    if line:sub(1, #"│ ") == "│ " and not first_gutter then first_gutter = index end
+  end
   assert(first_gutter, "no guttered line found")
 
-  -- and the block is folded closed by default (zo opens it)
+  -- the reasoning block is collapsed with a manual fold (no foldexpr, which
+  -- would run on every redraw)
+  assert(vim.wo[panel.state.win].foldmethod == "manual",
+    "expected manual folds, got " .. vim.wo[panel.state.win].foldmethod)
   if vim.wo[panel.state.win].foldenable then
     local closed = vim.api.nvim_win_call(panel.state.win, function()
       return vim.fn.foldclosed(first_gutter)

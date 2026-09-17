@@ -653,6 +653,11 @@ function M.doctor()
   end)
 
   job(function(cb)
+    -- Whatever nvim complained about last is usually the thing to fix.
+    cb("last nvim error: " .. (vim.v.errmsg ~= "" and vim.v.errmsg or "(none)"))
+  end)
+
+  job(function(cb)
     local history = event.history()
     local now = os.time()
     local out = {}

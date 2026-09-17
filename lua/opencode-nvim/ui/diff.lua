@@ -1,4 +1,5 @@
 local cfg = require("opencode-nvim.config")
+local log = require("opencode-nvim.log")
 
 --- Floating popups: diff review and permission confirmation.
 local M = {}
@@ -88,7 +89,13 @@ local function open_float(opts)
   if not defined["<Esc>"] then keymaps[#keymaps + 1] = { "<Esc>", close, "close" } end
 
   for _, map in ipairs(keymaps) do
-    vim.keymap.set("n", map[1], map[2], {
+    local action = map[2]
+    vim.keymap.set("n", map[1], function()
+      local ok, err = pcall(action)
+      if not ok then
+        log.notify("popup action failed: " .. tostring(err), vim.log.levels.ERROR)
+      end
+    end, {
       buffer = buf,
       nowait = true,
       silent = true,

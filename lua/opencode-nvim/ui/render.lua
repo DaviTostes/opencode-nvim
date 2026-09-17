@@ -73,6 +73,12 @@ function R:flush()
   self._draw()
 end
 
+--- Range and kind of the block that just finished (used to fold reasoning).
+---@return { kind: string?, first: integer?, last: integer? }
+function R:last_block()
+  return { kind = self.block_kind, first = self.block_start, last = #self.lines }
+end
+
 function R:line_count()
   return #self.lines
 end
