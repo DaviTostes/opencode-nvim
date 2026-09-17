@@ -472,6 +472,76 @@ test("reasoning around a tool call stays in one block", function()
   assert(not text:find("▸ The", 1, true), "the reasoning fragment leaked as a header:\n" .. text)
 end)
 
+--- Is the last line of the panel buffer on screen? (`w$` is the last
+--- *displayed* line, so folds do not confuse the check.)
+local function at_bottom()
+  return vim.api.nvim_win_call(panel.state.win, function()
+    return vim.fn.line("w$") >= vim.fn.line("$")
+  end)
+end
+
+local function topline()
+  return vim.api.nvim_win_call(panel.state.win, function()
+    return vim.fn.line("w0")
+  end)
+end
+
+test("the panel follows the end while it streams", function()
+  plugin.open({ input = false })
+  plugin.clear()
+  settle()
+  for index = 1, 50 do
+    feed("session.text.delta", { delta = string.format("line %d\n", index) })
+  end
+  settle()
+  assert(vim.api.nvim_buf_line_count(panel.state.buf) > 10, "not enough content")
+  assert(at_bottom(), "the panel did not follow the end")
+  plugin.close()
+end)
+
+test("scrolling up stops following and G brings it back", function()
+  plugin.open({ input = false })
+  plugin.clear()
+  settle()
+  for index = 1, 60 do
+    feed("session.text.delta", { delta = string.format("line %d\n", index) })
+  end
+  settle()
+  assert(at_bottom(), "should start at the end")
+
+  vim.api.nvim_win_call(panel.state.win, function() vim.cmd("normal! gg") end)
+  settle()
+  assert(not at_bottom(), "the view should have left the end")
+
+  local before = topline()
+  feed("session.text.delta", { delta = "more text\n" })
+  settle()
+  assert(topline() == before, string.format("the view moved on its own (%d -> %d)", before, topline()))
+
+  -- the key only reaches the panel when the panel has the focus
+  vim.api.nvim_set_current_win(panel.state.win)
+  vim.api.nvim_feedkeys("G", "x", false)
+  settle()
+  assert(at_bottom(), "G did not go back to the end")
+  plugin.close()
+end)
+
+test("folding a reasoning block keeps following the end", function()
+  plugin.open({ input = false })
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.reasoning.started")
+  for index = 1, 30 do
+    feed("session.reasoning.delta", { delta = string.format("think %d\n", index) })
+  end
+  feed("session.reasoning.ended")
+  settle()
+  -- creating the fold moves the cursor; that must not switch off following
+  assert(at_bottom(), "folding stopped the panel from following the end")
+  plugin.close()
+end)
+
 test("the panel advertises its keys", function()
   plugin.open({ input = false })
   local footer = vim.api.nvim_win_get_config(panel.state.win).footer or {}
@@ -535,6 +605,15 @@ test("prompt and panel are aligned and do not overlap", function()
   assert(panel_outer_bottom < input_outer_top,
     string.format("prompt overlaps the panel: panel_bottom=%d prompt_top=%d", panel_outer_bottom, input_outer_top))
   plugin.close()
+end)
+
+test("defaults do not steal focus", function()
+  local defaults = require("opencode-nvim.config").defaults
+  assert(defaults.approval.review == "notify",
+    "a turn that changes files must not open a focus-stealing popup by default")
+  assert(defaults.ui.focus_after_submit == "code",
+    "sending must leave you in your code by default")
+  assert(defaults.keymaps.enabled == false, "no keymaps by default")
 end)
 
 test("no keymaps are created unless asked for", function()

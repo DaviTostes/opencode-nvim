@@ -22,7 +22,7 @@ local state = {
   win = nil,
   renderer = nil,
   status = "idle",
-  autoscroll = true,
+  follow = true, -- whether the view was at the end before the last draw
   model = nil,
   geom = nil,
   session_id = nil,
@@ -52,6 +52,43 @@ M.state = state
 --- Folds are created once, when the block ends, instead of using `foldexpr`,
 --- which runs on every redraw (a fragile place to evaluate Lua, and one that
 --- cannot be exercised by the headless tests).
+--- Going to the end means: put the cursor on the last line. It is a deliberate
+--- jump, so it never fights the "is the view still at the end?" check.
+function M.scroll_to_bottom()
+  local win = state.win
+  if not (win and vim.api.nvim_win_is_valid(win)) then return end
+  local last = vim.api.nvim_buf_line_count(state.buf)
+  -- Done inside win_call so it also works while the panel is *not* focused
+  -- (the usual case: you are editing code and the answer streams). An unfocused
+  -- window does not scroll just because the cursor moved, which is why
+  -- following the stream used to work only sometimes.
+  pcall(vim.api.nvim_win_call, win, function()
+    pcall(vim.api.nvim_win_set_cursor, win, { last, 0 })
+    -- `zb` puts that line at the bottom of the window, whatever a fold hides
+    pcall(vim.cmd, "normal! zb")
+  end)
+end
+
+--- True when the last line of the buffer is on screen, i.e. the user is
+--- following the conversation and has not scrolled up.
+---
+--- `w$` is the last *displayed* buffer line, which is what matters: a closed
+--- fold makes 30 buffer lines take a single screen row.
+local function window_at_bottom()
+  local win = state.win
+  if not (win and vim.api.nvim_win_is_valid(win)) then return true end
+  return vim.api.nvim_win_call(win, function()
+    return vim.fn.line("w$") >= vim.fn.line("$")
+  end)
+end
+
+--- Kept for callers that just want the view to catch up.
+function M.scroll_soon()
+  -- live check: a stale `follow` (from the previous draw) would drag the
+  -- view back to the end after the user scrolled up
+  if window_at_bottom() then M.scroll_to_bottom() end
+end
+
 local function fold_reasoning(renderer)
   if (cfg.get().ui.panel or {}).folds == false then return end
   local block = renderer:last_block()
@@ -62,15 +99,15 @@ local function fold_reasoning(renderer)
   -- Write the block out first: a pending debounced draw would rewrite those
   -- lines right after the fold and drop it.
   renderer:draw()
+  local follow = window_at_bottom()
   pcall(vim.api.nvim_win_call, win, function()
     -- `:fold` *closes*; the way to create one from a script is `zf` over a
-    -- visual range. Restoring the view with winrestview would reopen the fold,
-    -- so the panel just goes back to following the end of the buffer.
+    -- visual range. Creating it moves the cursor, which is fine now that
+    -- following is read from the window view.
     pcall(vim.cmd, string.format("normal! %dGV%dGzf", block.first, block.last))
     pcall(vim.cmd, "normal! zc")
   end)
-  state.autoscroll = true
-  M.scroll_soon()
+  if follow then M.scroll_to_bottom() end
 end
 
 local function err_text(err)
@@ -293,7 +330,6 @@ function M.set_keymaps(buf)
   vim.keymap.set("n", "gd", function() M.show_diff() end, vim.tbl_extend("force", opts, { desc = "turn diff" }))
   vim.keymap.set("n", "r", function() M.retry() end, vim.tbl_extend("force", opts, { desc = "resend last prompt" }))
   vim.keymap.set("n", "G", function()
-    state.autoscroll = true
     M.scroll_to_bottom()
   end, vim.tbl_extend("force", opts, { desc = "go to the end" }))
 end
@@ -307,18 +343,16 @@ function M.ensure_buf()
   vim.bo[buf].swapfile = false
   state.buf = buf
   state.renderer = Renderer.new(buf)
+  -- Following the end is decided from the window view while drawing, never from
+  -- a sticky flag: folding moves the cursor programmatically and used to switch
+  -- the panel out of follow mode on its own.
+  state.renderer.on_before_draw = function()
+    state.follow = window_at_bottom()
+  end
+  state.renderer.on_after_draw = function()
+    if state.follow then M.scroll_to_bottom() end
+  end
   M.set_keymaps(buf)
-
-  vim.api.nvim_create_autocmd("CursorMoved", {
-    buffer = buf,
-    callback = function()
-      if state.win and vim.api.nvim_get_current_win() == state.win then
-        local last = vim.api.nvim_buf_line_count(buf)
-        local row = vim.api.nvim_win_get_cursor(state.win)[1]
-        state.autoscroll = row >= last - 1
-      end
-    end,
-  })
 
   return buf
 end
@@ -349,6 +383,8 @@ local function ensure_win()
     vim.wo[state.win].foldlevel = 0
     vim.wo[state.win].foldenable = true
   end
+  -- A freshly opened panel shows the end of the conversation.
+  M.scroll_to_bottom()
   return state.win
 end
 
@@ -381,18 +417,6 @@ function M.focus()
     pcall(vim.api.nvim_set_current_win, state.win)
   end
 end
-
-function M.scroll_to_bottom()
-  if not state.autoscroll then return end
-  if not M.visible() then return end
-  local last = vim.api.nvim_buf_line_count(state.buf)
-  pcall(vim.api.nvim_win_set_cursor, state.win, { last, 0 })
-end
-
---- Deltas arrive in bursts; coalesce the scrolling.
-M.scroll_soon = util.debounce(40, function()
-  M.scroll_to_bottom()
-end)
 
 --------------------------------------------------------------------------------
 -- Prompt input

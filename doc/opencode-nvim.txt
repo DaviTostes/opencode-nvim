@@ -82,7 +82,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
       shell = "ask",
     },
     approval = {
-      review = "popup",        -- "popup" | "notify" | false
+      review = "notify",       -- "notify" (no focus stealing) | "popup" | false
       agent = "opencode-nvim", -- agent whose rules ask for approval
       auto_detect = true,      -- use any agent that asks for approval
       permissions = {          -- rules written by :OpencodeApprovalAgent
@@ -102,7 +102,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
       panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, border = "rounded", folds = true },
       input = { height = 4, border = "rounded" },
       diff = { width = 0.85, height = 0.6, border = "rounded" },
-      focus_after_submit = "input",  -- "code" | "panel" | "input"
+      focus_after_submit = "code",   -- "code" (stay in your code) | "panel" | "input"
       escape_closes = "all",       -- <Esc> in the prompt closes the panel too
     },
     keymaps = {                -- none are set unless enabled = true
@@ -233,6 +233,9 @@ Inside the panel:
   r		resend the last prompt
   G		go to the end
   zo, zR	open a folded reasoning block (or all of them)
+
+The panel follows the stream even while it is not focused. Scrolling up stops
+the following (so you can read back); `G` returns to the end.
 
 Inside the prompt:
   <CR>		send

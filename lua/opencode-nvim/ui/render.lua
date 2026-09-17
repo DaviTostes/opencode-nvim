@@ -53,6 +53,10 @@ end
 --- finalized before it ran.
 function R:draw()
   if not self:valid() then return end
+  -- The panel reads the window view here: whether to follow the end must be
+  -- decided *before* the lines change, and never by a sticky flag (moving the
+  -- cursor programmatically, e.g. when folding, used to turn it off).
+  if self.on_before_draw then pcall(self.on_before_draw) end
   local start = math.min(self.drawn, self.committed)
   local tail = {}
   for index = start + 1, #self.lines do
@@ -67,6 +71,7 @@ function R:draw()
     end
   end
   self.drawn = #self.lines
+  if self.on_after_draw then pcall(self.on_after_draw) end
 end
 
 function R:flush()

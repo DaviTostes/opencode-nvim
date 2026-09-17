@@ -78,7 +78,8 @@ function M.create_commands()
   command("OpencodeNew", function() M.new_session() end, { desc = "new opencode session" })
   command("OpencodeAttach", function(args)
     session.attach(args.args, function(err)
-      if err then fail("attach", err) end
+      if err then return fail("attach", err) end
+      panel.open({ input = false })
     end)
   end, { nargs = 1, desc = "attach an existing session" })
   command("OpencodeSessions", function() M.select_session() end, { desc = "pick a session" })
@@ -245,6 +246,8 @@ end
 function M.new_session()
   session.new({}, function(err)
     if err then return fail("new session", err) end
+    -- Show it, without taking the cursor away from the code.
+    panel.open({ input = false })
   end)
 end
 
@@ -299,7 +302,8 @@ function M.select_session()
       local info = map[choice]
       if not info then return end
       session.attach(info.id, function(attach_err)
-        if attach_err then fail("attach", attach_err) end
+        if attach_err then return fail("attach", attach_err) end
+        panel.open({ input = false })
       end)
     end)
   end)

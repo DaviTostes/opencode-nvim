@@ -96,8 +96,15 @@ require("opencode-nvim").setup({
   find bugs here, write tests, refactor this, document this, explain this file,
   review my changes, commit message. It pre-fills the prompt so you can edit it
   before sending.
-- **Review a turn.** `:OpencodeDiff` opens the diff; `u` inside that popup
-  undoes the whole turn (files restored), `<CR>` keeps it.
+- **Review a turn.** When a turn touches files you just get a notification
+  (`2 file(s) changed ...`) — nothing steals your focus. `:OpencodeDiff` opens
+  the diff when you want it; `u` inside that popup undoes the whole turn (files
+  restored), `<CR>` keeps it. Prefer the old always-popup behaviour?
+  `approval = { review = "popup" }`.
+- **Focus stays where you are.** `:Opencode`/`:OpencodeSessions`/`:OpencodeNew`
+  show the panel without moving your cursor; after sending you stay in your code
+  (`ui.focus_after_submit = "code"`). The only thing that takes focus is a
+  permission request, because the turn is paused waiting for your decision.
 - **A turn that never answers.** The panel counts the elapsed time and warns at
   30s showing the last event of that session. `<C-c>` interrupts, `r` in the
   panel (or `:OpencodeResend`) sends again, and `:OpencodeDoctor` prints the
@@ -117,6 +124,9 @@ require("opencode-nvim").setup({
 - **In the panel:** `i`/`a`/`<CR>` prompt · `q`/`<Esc>` close · `<C-c>`
   interrupt · `gd` diff · `r` resend · `G` go to the end. The panel lists those
   keys in its own footer, so you are never stuck looking at a box.
+- **The panel follows the stream** while you keep editing (it works with the
+  panel unfocused). Scroll up to read something and it stops following; `G`
+  brings it back to the end.
 - **In the popups:** `<CR>`/`y` allow once · `A` allow always · `x` reject ·
   `<Esc>`/`q` later. They are normal buffers — `j`/`k`, `<C-d>`, `/` and `gg`
   work, and the keys are listed in the footer.
@@ -137,7 +147,7 @@ require("opencode-nvim").setup({
   agent = "build",                        -- default agent
   model = nil,                            -- nil = the last model used in the TUI
   approval = {
-    review = "popup",                     -- "popup" | "notify" | false
+    review = "notify",                    -- "notify" | "popup" | false
     agent = "opencode-nvim",              -- agent whose rules ask for approval
     auto_detect = true,                   -- use any agent that asks
   },
@@ -145,7 +155,7 @@ require("opencode-nvim").setup({
   context = { auto = true },              -- prepend the editor context
   ui = {
     panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22 },
-    focus_after_submit = "input",         -- "code" | "panel" | "input"
+    focus_after_submit = "code",          -- "code" | "panel" | "input"
     escape_closes = "all",                -- <Esc> closes prompt + panel
   },
 })

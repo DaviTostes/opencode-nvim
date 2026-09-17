@@ -28,9 +28,10 @@ M.defaults = {
   model = nil,
   permissions = { edit = "ask", shell = "ask" },
   approval = {
-    -- "popup": show the turn diff with an undo option; "notify": just warn;
-    -- false disables it.
-    review = "popup",
+    -- After a turn that touched files: "notify" just says what changed (no
+    -- focus stealing — the diff is one command away with :OpencodeDiff),
+    -- "popup" opens the diff float, false disables it.
+    review = "notify",
     -- Agent (defined in the OpenCode config) whose rules ask for approval.
     -- When it exists, edits pause and the diff is approved before writing.
     agent = "opencode-nvim",
@@ -60,7 +61,9 @@ M.defaults = {
     panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, border = "rounded", folds = true },
     input = { height = 4, border = "rounded" },
     diff = { width = 0.85, height = 0.6, border = "rounded" },
-    focus_after_submit = "input", -- "code" | "panel" | "input"
+    -- After sending: "code" keeps you in your code while the answer streams,
+    -- "input" leaves the cursor in the prompt, "panel" focuses the panel.
+    focus_after_submit = "code", -- "code" | "panel" | "input"
     escape_closes = "all", -- <Esc> in the prompt closes the panel too ("input" keeps it)
   },
   -- No keymaps are created unless you ask for them: set `enabled = true` and
