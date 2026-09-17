@@ -64,10 +64,12 @@ M.defaults = {
     -- Opening the panel on purpose (a command or the toggle) focuses it, so its
     -- keys work right away. Automatic opens never move your cursor.
     focus_on_open = true,
-    -- After sending: "code" keeps you in your code while the answer streams,
-    -- "input" leaves the cursor in the prompt, "panel" focuses the panel.
-    focus_after_submit = "code", -- "code" | "panel" | "input"
-    escape_closes = "all", -- <Esc> in the prompt closes the panel too ("input" keeps it)
+    -- After sending: "input" keeps you in the prompt (type the next message),
+    -- "code" puts you back in your code, "panel" focuses the panel.
+    focus_after_submit = "input", -- "input" | "code" | "panel"
+    -- <Esc> in the prompt: "panel" closes the prompt and focuses the panel,
+    -- "all" closes the whole UI, "input" just closes the prompt.
+    escape_closes = "panel", -- "panel" | "all" | "input"
   },
   -- No keymaps are created unless you ask for them: set `enabled = true` and
   -- the keys you want. Commands cover every action (see :help opencode-nvim).

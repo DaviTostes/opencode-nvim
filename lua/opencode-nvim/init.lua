@@ -108,6 +108,8 @@ function M.create_commands()
   command("OpencodeEvents", function() M.events() end, { desc = "events received from the server" })
   command("OpencodeHealth", function() M.health() end, { desc = "check the connection to opencode" })
   command("OpencodeClose", function() M.close() end, { desc = "close the panel" })
+  command("OpencodeFocus", function() M.focus_toggle() end,
+    { desc = "switch the cursor between the panel and your code" })
   command("OpencodeResend", function() M.resend() end, { desc = "send the last prompt again" })
   command("OpencodeClear", function() M.clear() end, { desc = "clear the panel" })
   command("OpencodeDoctor", function() M.doctor() end, { desc = "diagnose a turn that never answers" })
@@ -239,6 +241,16 @@ function M.interrupt()
   session.interrupt()
 end
 
+--- Switch the cursor between the plugin UI and your code.
+---
+--- Neovim has no built-in binding for this: floats are ordinary windows, so
+--- `nvim_set_current_win` (or `:wincmd w`, which also cycles into them) works,
+--- but this is the reliable round trip.
+function M.focus_toggle()
+  M._autosetup()
+  panel.focus_toggle()
+end
+
 --- Send the last prompt again (the provider hiccups often).
 function M.resend()
   M._autosetup()
@@ -254,11 +266,8 @@ function M.clear()
 end
 
 function M.new_session()
-  session.new({}, function(err)
-    if err then return fail("new session", err) end
-    -- Show it, without taking the cursor away from the code.
-    panel.open({ input = false })
-  end)
+  M._autosetup()
+  panel.new_session()
 end
 
 --- Ready-made instructions, so daily actions are one pick away.

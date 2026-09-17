@@ -310,7 +310,7 @@ local function panel_config()
     border = (cfg.get().ui.panel or {}).border or "rounded",
     title = " " .. M.title() .. " ",
     title_pos = "left",
-    footer = " i prompt · <C-c> interrupt · gd diff · r resend · q close ",
+    footer = " i prompt · N new session · <C-c> interrupt · gd diff · r resend · q close ",
     footer_pos = "center",
     focusable = true,
     zindex = 50,
@@ -336,6 +336,7 @@ function M.set_keymaps(buf)
   vim.keymap.set("n", "<C-c>", function() M.interrupt() end, vim.tbl_extend("force", opts, { desc = "interrupt" }))
   vim.keymap.set("n", "gd", function() M.show_diff() end, vim.tbl_extend("force", opts, { desc = "turn diff" }))
   vim.keymap.set("n", "r", function() M.retry() end, vim.tbl_extend("force", opts, { desc = "resend last prompt" }))
+  vim.keymap.set("n", "N", function() M.new_session() end, vim.tbl_extend("force", opts, { desc = "new session" }))
   vim.keymap.set("n", "G", function()
     M.scroll_to_bottom()
   end, vim.tbl_extend("force", opts, { desc = "go to the end" }))
@@ -437,7 +438,39 @@ end
 function M.focus()
   if M.visible() then
     pcall(vim.api.nvim_set_current_win, state.win)
+    vim.cmd("stopinsert")
   end
+end
+
+--- Window to return to (the code you were in before opening the panel).
+function M.remember_code_win()
+  local win = vim.api.nvim_get_current_win()
+  if win ~= state.win and win ~= state.input.win and vim.api.nvim_win_is_valid(win) then
+    state.code_win = win
+  end
+end
+
+--- Focus that code window again.
+function M.focus_code()
+  local win = state.code_win
+  if win and vim.api.nvim_win_is_valid(win) then
+    return pcall(vim.api.nvim_set_current_win, win)
+  end
+  for _, candidate in ipairs(vim.api.nvim_list_wins()) do
+    local buf = vim.api.nvim_win_get_buf(candidate)
+    if vim.api.nvim_win_get_config(candidate).relative == "" and buf ~= state.buf then
+      return pcall(vim.api.nvim_set_current_win, candidate)
+    end
+  end
+end
+
+--- Switch the cursor between the plugin UI and your code.
+function M.focus_toggle()
+  local current = vim.api.nvim_get_current_win()
+  if current == state.win or current == state.input.win then
+    return M.focus_code()
+  end
+  return M.focus()
 end
 
 --------------------------------------------------------------------------------
@@ -591,6 +624,7 @@ end
 function M.open_input(prefill, selection, fresh)
   local target = M.code_target()
   state.input.target = target
+  if target and target.win then state.code_win = target.win end
   -- Only an explicit selection counts (visual keymap or a ranged command):
   -- reusing the previous selection or the `'<`/`'>` marks made old selections
   -- leak into prompts that did not ask for one.
@@ -705,6 +739,7 @@ function M.send(text, opts)
     selection = opts.selection,
   })
 
+  M.remember_code_win()
   M.ensure_buf()
   M.renderer():user(text)
   -- Streaming: show the panel, never take the cursor (focus_after_submit decides
@@ -746,6 +781,17 @@ function M.retry()
   end
   local prompt = state.last_prompt
   M.send(prompt.text, prompt.opts)
+end
+
+--- A fresh session, with an empty prompt ready to type.
+function M.new_session()
+  session.new({}, function(err)
+    if err then
+      return log.notify("new session: " .. util.err_text(err), vim.log.levels.ERROR)
+    end
+    M.clear()
+    M.open({ input = true, fresh = true })
+  end)
 end
 
 function M.show_diff()
@@ -808,13 +854,18 @@ function M.clear()
   M.renderer():clear()
 end
 
---- `<Esc>` inside the prompt: leave the prompt, and the panel as well by
---- default so a single key gets the whole UI out of the way.
---- `ui.escape_closes = "input"` keeps the panel open instead.
+--- `<Esc>` inside the prompt: close the prompt and hand the focus to the panel,
+--- where the keys (gd, r, N, q) work. `ui.escape_closes` changes that: "all"
+--- closes the whole UI, "input" just closes the prompt.
 function M.escape()
-  local mode = (cfg.get().ui or {}).escape_closes or "all"
+  local mode = (cfg.get().ui or {}).escape_closes or "panel"
   M.close_input()
-  if mode ~= "input" then M.close() end
+  if mode == "all" then
+    return M.close()
+  end
+  if mode == "panel" then
+    return M.focus()
+  end
 end
 
 --------------------------------------------------------------------------------

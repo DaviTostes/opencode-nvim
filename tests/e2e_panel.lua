@@ -103,11 +103,12 @@ panel.submit()
 wait(function() return not panel.state.input.win or panel.state.input.win == nil end, 2000)
 vim.wait(200, function() return false end, 50)
 
--- Default focus_after_submit is "code": sending leaves you in your code while
--- the answer streams in the corner.
+-- Default focus_after_submit is "input": sending leaves you in the prompt, ready
+-- for the next message, while the answer streams in the corner.
 local current = vim.api.nvim_get_current_win()
-report("the cursor stays in the code after sending", current == code_win,
-  string.format("current=%d code_win=%d", current, code_win))
+report("the cursor stays in the prompt after sending",
+  panel.state.input.win ~= nil and current == panel.state.input.win,
+  string.format("input=%s current=%d", tostring(panel.state.input.win), current))
 
 report("the panel shows the prompt", (function()
   local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false), "\n")

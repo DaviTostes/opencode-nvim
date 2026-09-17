@@ -4,7 +4,6 @@ Drive OpenCode from Neovim. The panel floats bottom-right and **does not steal
 focus**: answers stream while you keep editing.
 
 - Streaming text, reasoning and tool calls
-- Questions from the agent show up as a picker you answer with one key
 - Edits via a diff you approve in Neovim
 - Changed buffers reload on their own, keeping the cursor
 - Prompts carry editor context (file, cursor, selection, diagnostics)
@@ -15,6 +14,9 @@ focus**: answers stream while you keep editing.
 
 - Neovim 0.11+
 - OpenCode V2 (`opencode2`) in `PATH`
+
+Optional: [mini.pick] for the session/model/agent pickers, which otherwise fall
+back to `vim.ui.select`.
 
 ## Install
 
@@ -30,27 +32,21 @@ Local development: `vim.opt.rtp:prepend("/home/toast/opencode-nvim")`.
 ```
 :Opencode          show/hide the panel and focus it
 :OpencodeAsk       open the prompt and type
-<CR>               send
-<Esc>              leave
+<CR>               send (you stay in the prompt)
+<Esc>              close the prompt, focus the panel
 ```
 
-Opening the panel **takes the cursor**, so its keys (`gd` diff, `r` resend,
-`zo` unfold, `q` close) work right away — `ui.focus_on_open = false` keeps your
-cursor in the code instead. Nothing *automatic* ever moves it: while an answer
-streams, the review notification and the panel updates all happen without
-touching your focus, and after sending you stay where `ui.focus_after_submit`
-points (`code` by default).
+Opening the panel takes the cursor, so its keys (`gd` diff, `r` resend, `zo`
+unfold, `q` close) work right away; `ui.focus_on_open = false` keeps your cursor
+in the code instead. Nothing *automatic* ever moves it, and after sending you
+stay where `ui.focus_after_submit` points (`code` by default). The prompt always
+starts empty; `<C-Up>`/`<C-Down>` walks the history.
 
-The prompt is opened on purpose by `:OpencodeAsk`, `:OpencodeEdit`,
-`:OpencodeActions` or the `i` key inside the panel, and it always starts empty
-(`i` keeps the draft you were typing). `<C-Up>`/`<C-Down>` walks the history.
-
-That is the whole loop. No keymaps are installed by default; if you want them,
-list exactly the ones you want (mapping happens when `setup()` runs, so
-`vim.g.mapleader` must be set first):
+No keymaps are installed by default. To add some (set `vim.g.mapleader` before
+`setup()`):
 
 ```lua
-vim.g.mapleader = " " -- before setup()
+vim.g.mapleader = " "
 require("opencode-nvim").setup({
   keymaps = {
     enabled = true,
@@ -69,6 +65,7 @@ require("opencode-nvim").setup({
 | --- | --- |
 | `:Opencode` | show/hide the panel (focuses it) |
 | `:OpencodeClose` | close the panel |
+| `:OpencodeFocus` | switch the cursor between the panel and your code |
 | `:OpencodeAsk [text]` | ask; with a range it sends the selection |
 | `:OpencodeEdit` | ask for a change in the selection (or file) |
 | `:OpencodeActions` | pick a ready-made action |
@@ -84,7 +81,6 @@ require("opencode-nvim").setup({
 | `:OpencodeApproval` | in-editor approval status |
 | `:OpencodeApprovalAgent` | create the approval agent in the OpenCode config |
 | `:OpencodePermissions` | decide permissions you left for later |
-| `:OpencodeQuestion` | show the question waiting for an answer |
 | `:OpencodeDoctor` | diagnose a turn that never answers |
 | `:OpencodeHealth` / `:OpencodeEvents` / `:OpencodeLog` | connection, event log, log level |
 
@@ -93,59 +89,45 @@ require("opencode-nvim").setup({
 
 ## Tips
 
-- **Ask about what you are looking at.** Select the code and run
-  `:'<,'>OpencodeAsk`, or call `:OpencodeAsk` with the cursor on a line. The
-  prompt automatically gets `[editor context] file=... cursor=...` plus the
-  selected code, the filetype, `modified=true` and the diagnostics count — so
-  "is this right?" works without naming anything.
-- **Make it write code.** `:'<,'>OpencodeEdit` then describe the change
-  ("accept a callback"). The agent proposes, you see the diff, `<CR>` approves,
-  the file is written and the buffer reloads keeping your cursor. `u` still
-  undoes the buffer if you change your mind.
-- **One pick instead of typing.** `:OpencodeActions` has explain this code,
-  find bugs here, write tests, refactor this, document this, explain this file,
-  review my changes, commit message. It pre-fills the prompt so you can edit it
-  before sending.
-- **Questions.** When the agent needs a decision (the `question` tool) the
-  panel shows it and a popup lists the options: a digit (or `<CR>` on the line)
-  picks one, `o` types a custom answer, `<Esc>` leaves it for later
-  (`:OpencodeQuestion` brings it back). The answer goes back to the agent and the
-  turn continues; the question and what you chose stay in the transcript.
-- **Review a turn.** When a turn touches files you just get a notification
-  (`2 file(s) changed ...`) — nothing steals your focus. `:OpencodeDiff` opens
-  the diff when you want it; `u` inside that popup undoes the whole turn (files
-  restored), `<CR>` keeps it. Prefer the old always-popup behaviour?
-  `approval = { review = "popup" }`.
-- **You control the focus.** Opening the panel (`:Opencode`, `:OpencodeSessions`,
-  `:OpencodeNew`) puts the cursor in it — you asked for it. Sending leaves you in
-  your code (`ui.focus_after_submit = "code"`), streaming never pulls you in, and
-  the only automatic thing that takes focus is a permission request, because the
-  turn is paused waiting for your decision.
-- **A turn that never answers.** The panel counts the elapsed time and warns at
-  30s showing the last event of that session. `<C-c>` interrupts, `r` in the
-  panel (or `:OpencodeResend`) sends again, and `:OpencodeDoctor` prints the
-  server, the stream, the session state, the last events and the last nvim
-  error (`:messages` has the full history).
-- **Pick a good model.** The plugin uses the model you last used in the TUI. The
-  server default can be a free-tier model that refuses to run; pin one with
-  `model = { providerID = "...", id = "..." }` or pick it live with
-  `:OpencodeModels` (the choice in use is marked `●`, same for `:OpencodeAgents`).
-- **Reasoning is folded.** Each reasoning run shows a `▸ thinking` header with
-  the block folded right below it; `zo` opens one, `zR` opens all. Answers are
-  never buried in thinking.
+- **Ask about what you are looking at.** Select code and run
+  `:'<,'>OpencodeAsk`, or `:OpencodeAsk` with the cursor on a line. The prompt
+  gets `[editor context] file=... cursor=...` plus the selected code, filetype,
+  `modified=true` and the diagnostics count.
+- **Make it write code.** `:'<,'>OpencodeEdit` then describe the change; `<CR>`
+  approves the diff, the file is written and the buffer reloads keeping your
+  cursor. `u` still undoes the buffer.
+- **One pick instead of typing.** `:OpencodeActions` pre-fills the prompt with
+  explain this code, find bugs here, write tests, refactor this, document this,
+  explain this file, review my changes, commit message.
+- **Review a turn.** Changed files just show a notification. `:OpencodeDiff`
+  opens the diff when you want it: `u` undoes the turn (files restored), `<CR>`
+  keeps it. `approval = { review = "popup" }` restores the old always-popup
+  behaviour.
+- **You control the focus.** Opening the panel takes the cursor (you asked for
+  it) and after sending you stay in the prompt, ready for the next message
+  (`ui.focus_after_submit = "input"`). `<Esc>` closes the prompt and hands the
+  focus to the panel, where `q` closes the UI. `:OpencodeFocus` switches between
+  the panel and your code at any time — floats are ordinary windows, so
+  `nvim_set_current_win` or `:wincmd w` work too, but this is the round trip.
+  Streaming never pulls you in, and the only automatic focus grab is a permission
+  request, since the turn is paused.
+- **A turn that never answers.** The panel counts elapsed time and warns at 30s
+  with the last event. `<C-c>` interrupts, `r` (or `:OpencodeResend`) resends,
+  `:OpencodeDoctor` prints the server, stream, session state and last errors.
+- **Pick a good model.** Uses the model you last used in the TUI; pin one with
+  `model = { providerID = "...", id = "..." }` or pick live with
+  `:OpencodeModels` (the one in use is marked `●`).
+- **Reasoning is folded.** Each run shows a `▸ thinking` header with the block
+  folded below it; `zo` opens one, `zR` opens all.
 - **Share with the TUI.** `:OpencodeSessions` (or `:OpencodeAttach ses_...`)
-  attaches to any session, including one already running in the terminal. The
-  panel only renders the session it is attached to, so a TUI session in another
-  terminal never bleeds into it.
-- **In the panel:** `i`/`a`/`<CR>` prompt · `q`/`<Esc>` close · `<C-c>`
-  interrupt · `gd` diff · `r` resend · `G` go to the end. The panel lists those
-  keys in its own footer, so you are never stuck looking at a box.
-- **The panel follows the stream** while you keep editing (it works with the
-  panel unfocused). Scroll up to read something and it stops following; `G`
-  brings it back to the end.
+  attaches to any session, including one already running in the terminal.
+- **In the panel:** `i`/`a`/`<CR>` prompt · `N` new session · `q`/`<Esc>` close ·
+  `<C-c>` interrupt · `gd` diff · `r` resend · `G` go to the end — all listed in
+  the footer.
+- **The panel follows the stream** while you keep editing. Scroll up to stop
+  following; `G` brings it back to the end.
 - **In the popups:** `<CR>`/`y` allow once · `A` allow always · `x` reject ·
-  `<Esc>`/`q` later. They are normal buffers — `j`/`k`, `<C-d>`, `/` and `gg`
-  work, and the keys are listed in the footer.
+  `<Esc>`/`q` later. They are normal buffers, so motions and `/` work.
 - **Undo needs git.** Turn diffs and file restores use OpenCode snapshots, which
   use git; outside a repository the diff falls back to the working tree.
 
@@ -153,7 +135,7 @@ require("opencode-nvim").setup({
 
 `@this`, `@buffer`, `@buffers`, `@diagnostics`, `@diff` expand to code, files,
 buffers, diagnostics and `git diff`. You rarely need them: `context.auto`
-already prepends the header and the selection. Typing one skips the automatic
+already prepends the header and the selection; typing one skips the automatic
 part.
 
 ## Configuration
@@ -172,8 +154,8 @@ require("opencode-nvim").setup({
   ui = {
     panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22 },
     focus_on_open = true,                 -- opening the panel focuses it
-    focus_after_submit = "code",          -- "code" | "panel" | "input"
-    escape_closes = "all",                -- <Esc> closes prompt + panel
+    focus_after_submit = "input",         -- "input" | "code" | "panel"
+    escape_closes = "panel",              -- <Esc>: "panel" | "all" | "input"
   },
 })
 ```
@@ -187,7 +169,6 @@ Everything (options, commands, events, Lua API, the V2 beta workarounds) is in
 make test           # HTTP + SSE + UI + discovery against a fake server (no tokens)
 make e2e            # real protocol: text streaming (one tiny prompt)
 make e2e-panel      # real interactive flow through the panel (one prompt)
-make e2e-form       # real question flow: the agent asks, the popup answers
 make e2e-approval   # real approval flow: permission popup + revert (one prompt)
 make probe          # config/agents/permissions probe (no tokens)
 make probe-hang     # what the server does during a turn that never answers

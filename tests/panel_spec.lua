@@ -542,6 +542,58 @@ test("folding a reasoning block keeps following the end", function()
   plugin.close()
 end)
 
+test("the panel is display-only", function()
+  plugin.open({ input = false })
+  plugin.clear()
+  settle()
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "some text\n" })
+  feed("session.text.ended", { text = "some text" })
+  settle()
+  assert(panel_text():find("some text", 1, true), "nothing was written")
+  assert(vim.bo[panel.state.buf].modifiable == false,
+    "the panel buffer is editable (typing in it would corrupt the view)")
+  plugin.close()
+end)
+
+test("the panel has a new-session key", function()
+  -- buffer-local mappings are only visible with that buffer current
+  local mapping = vim.api.nvim_buf_call(panel.state.buf, function()
+    return vim.fn.maparg("N", "n", false, true)
+  end)
+  assert(type(mapping) == "table" and mapping.buffer == 1, "no buffer-local N mapping in the panel")
+
+  local session = require("opencode-nvim.session")
+  local saved_new = session.new
+  session.new = function(_, cb) cb(nil) end -- no network
+  plugin.open({ input = false })
+  panel.renderer():note("old content")
+  settle()
+  panel.new_session()
+  settle()
+  session.new = saved_new
+
+  assert(panel.state.input.win ~= nil, "the prompt did not open")
+  assert(panel_text() == "", "the panel was not cleared: " .. panel_text())
+  plugin.close()
+end)
+
+test("focus can be switched between the panel and the code", function()
+  plugin.close()
+  vim.cmd("Opencode")
+  settle()
+  assert(vim.api.nvim_get_current_win() == panel.state.win, "the panel did not take focus")
+
+  vim.cmd("OpencodeFocus")
+  settle()
+  assert(vim.api.nvim_get_current_win() ~= panel.state.win, "focus did not leave the panel")
+
+  vim.cmd("OpencodeFocus")
+  settle()
+  assert(vim.api.nvim_get_current_win() == panel.state.win, "focus did not come back")
+  plugin.close()
+end)
+
 test("the panel advertises its keys", function()
   plugin.open({ input = false })
   local footer = vim.api.nvim_win_get_config(panel.state.win).footer or {}
@@ -734,8 +786,10 @@ test("defaults do not steal focus", function()
   local defaults = require("opencode-nvim.config").defaults
   assert(defaults.approval.review == "notify",
     "a turn that changes files must not open a focus-stealing popup by default")
-  assert(defaults.ui.focus_after_submit == "code",
-    "sending must leave you in your code by default")
+  assert(defaults.ui.focus_after_submit == "input",
+    "sending must leave the cursor in the prompt by default")
+  assert(defaults.ui.escape_closes == "panel",
+    "Esc in the prompt should close the prompt and focus the panel")
   assert(defaults.keymaps.enabled == false, "no keymaps by default")
 end)
 
@@ -837,20 +891,28 @@ test("<Esc> in the prompt leaves the whole UI", function()
 
   plugin.open()
   assert(panel.visible() and panel.state.input.win ~= nil, "the UI did not open")
-  panel.escape()
+  panel.escape() -- default: "panel"
   settle()
   assert(panel.state.input.win == nil, "the prompt is still open")
-  assert(not panel.visible(), "the panel is still open")
+  assert(panel.visible(), "the panel should have stayed open")
+  assert(vim.api.nvim_get_current_win() == panel.state.win,
+    "Esc should hand the focus to the panel")
 
-  -- "<Esc> only closes the prompt" stays available
+  -- "all" closes the whole UI
+  cfg.get().ui.escape_closes = "all"
+  plugin.open()
+  panel.escape()
+  settle()
+  assert(not panel.visible(), "escape_closes = all did not close the panel")
+
+  -- "input" only closes the prompt
   cfg.get().ui.escape_closes = "input"
   plugin.open()
   panel.escape()
   settle()
-  assert(panel.state.input.win == nil, "the prompt is still open")
-  assert(panel.visible(), "the panel should have stayed open")
+  assert(panel.state.input.win == nil and panel.visible(), "escape_closes = input")
 
-  cfg.get().ui.escape_closes = "all"
+  cfg.get().ui.escape_closes = "panel"
   plugin.close()
 end)
 

@@ -9,9 +9,6 @@ local log = require("opencode-nvim.log")
 --- `{ data = ... }` envelope used by the server.
 local M = {}
 
----@param opts { method?: string, path: string, body?: table, accept?: string, timeout?: integer }
----@param cb fun(err: any, decoded: any, status: integer?)
----@param retried? boolean
 local function request(opts, cb, retried)
   discovery.resolve(function(resolve_err, server)
     if resolve_err then return cb(resolve_err) end

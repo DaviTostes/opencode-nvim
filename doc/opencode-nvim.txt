@@ -103,7 +103,8 @@ Without calling `setup()` the plugin configures itself with the defaults on
       input = { height = 4, border = "rounded" },
       diff = { width = 0.85, height = 0.6, border = "rounded" },
       focus_on_open = true,          -- opening the panel focuses it
-      focus_after_submit = "code",   -- "code" (stay in your code) | "panel" | "input"
+      focus_after_submit = "input",  -- "input" (stay in the prompt) | "code" | "panel"
+      escape_closes = "panel",       -- <Esc>: "panel" | "all" | "input"
       escape_closes = "all",       -- <Esc> in the prompt closes the panel too
     },
     keymaps = {                -- none are set unless enabled = true
@@ -153,6 +154,10 @@ reloads keeping your cursor, and `u` still undoes it.
 	open the prompt: use |:OpencodeAsk| or the `i` key inside the panel.
 :OpencodeClose					*:OpencodeClose*
 	Close the panel.
+:OpencodeFocus					*:OpencodeFocus*
+	Switch the cursor between the panel/prompt and your code. Neovim has no
+	built-in binding for floats; `nvim_set_current_win` or `:wincmd w` also
+	work, this is the round trip.
 :OpencodeAsk [text]				*:OpencodeAsk*
 	Ask, with the prompt pre-filled when `text` is given. Accepts a range:
 	from a visual selection use `:'<,'>OpencodeAsk` and the selection is sent
@@ -238,6 +243,7 @@ Inside the panel:
   q, <Esc>	close the panel
   <C-c>		interrupt
   gd		diff of the last turn
+  N		new session
   r		resend the last prompt
   G		go to the end
   zo, zR	open a folded reasoning block (or all of them)
@@ -250,7 +256,8 @@ Inside the prompt:
   <C-j>		newline
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
   <C-Up>, <C-Down>	history of prompts (normal mode: <C-p>, <C-n>)
-  <Esc>		close the prompt and the panel (see `ui.escape_closes`)
+  <Esc>		close the prompt and focus the panel (`ui.escape_closes`:
+		"panel", "all" closes everything, "input" just closes)
   <C-c>		cancel the current turn
 
 In the question popup:
