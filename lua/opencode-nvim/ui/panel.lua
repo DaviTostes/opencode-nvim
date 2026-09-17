@@ -82,6 +82,8 @@ local state = {
     history = {},
     index = 0,
     draft = "",
+    -- Images pasted/attached to the next prompt, cleared when it is sent.
+    attachments = {},
   },
 }
 
@@ -197,8 +199,9 @@ function M.title()
     local model = state.model or (info.model and (info.model.id or info.model.modelID))
     if info.agent then parts[#parts + 1] = info.agent end
     if model then parts[#parts + 1] = model end
-    local total, cost = session.tokens()
-    if total > 0 then parts[#parts + 1] = string.format("%.1fk", total / 1000) end
+    local used = session.context_tokens()
+    local _, cost = session.tokens()
+    if used > 0 then parts[#parts + 1] = string.format("%.1fk", used / 1000) end
     if cost and cost > 0 then parts[#parts + 1] = string.format("$%.4f", cost) end
   else
     parts[#parts + 1] = "no session"
@@ -525,7 +528,30 @@ function M.focus()
   if M.visible() then
     pcall(vim.api.nvim_set_current_win, state.win)
     vim.cmd("stopinsert")
+    return true
   end
+  return false
+end
+
+--- Focus the prompt window when it is open, leaving the cursor at the end and
+--- insert mode on (you came back to type).
+---@return boolean focused
+function M.focus_input()
+  local win = state.input.win
+  if not (win and vim.api.nvim_win_is_valid(win)) then return false end
+  pcall(vim.api.nvim_set_current_win, win)
+  local last = vim.api.nvim_buf_line_count(state.input.buf)
+  local last_line = vim.api.nvim_buf_get_lines(state.input.buf, last - 1, last, false)[1] or ""
+  pcall(vim.api.nvim_win_set_cursor, win, { last, #last_line })
+  vim.cmd("startinsert!")
+  return true
+end
+
+--- Focus whatever plugin window is open: the prompt first (so you can keep
+--- typing), the panel otherwise.
+function M.focus_ui()
+  if M.focus_input() then return end
+  return M.focus()
 end
 
 --- Window to return to (the code you were in before opening the panel).
@@ -556,7 +582,7 @@ function M.focus_toggle()
   if current == state.win or current == state.input.win then
     return M.focus_code()
   end
-  return M.focus()
+  return M.focus_ui()
 end
 
 --------------------------------------------------------------------------------
@@ -577,6 +603,12 @@ function M.input_buf()
   vim.keymap.set({ "i", "n" }, "<C-j>", function() M.insert_newline() end, opts)
   vim.keymap.set({ "i", "n" }, "<Esc>", function() M.escape() end, opts)
   vim.keymap.set({ "i", "n" }, "<C-c>", function() M.interrupt() end, opts)
+  -- Like the OpenCode TUI: Ctrl+V attaches a clipboard image. Without one the
+  -- key keeps its normal meaning (literal insert / blockwise visual).
+  vim.keymap.set({ "i", "n" }, "<C-v>", function()
+    if M.paste_image(nil, true) then return end
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-v>", true, false, true), "n", false)
+  end, opts)
   -- <C-p>/<C-n> are completion keys in insert mode, so the prompt history uses
   -- <C-Up>/<C-Down> there and <C-p>/<C-n> only in normal mode.
   vim.keymap.set({ "i", "n" }, "<C-Up>", function() M.input_history(-1) end, opts)
@@ -728,6 +760,7 @@ function M.open_input(prefill, selection, fresh)
   if fresh then
     state.input.index = 0
     state.input.draft = ""
+    state.input.attachments = {}
   end
 
   local buf = M.input_buf()
@@ -765,6 +798,58 @@ function M.insert_newline()
   vim.cmd("startinsert!")
 end
 
+--- Insert text at the prompt cursor (works in insert and normal mode).
+function M.insert_input_text(text)
+  local win = state.input.win
+  if not (win and vim.api.nvim_win_is_valid(win)) then return end
+  local row, col = unpack(vim.api.nvim_win_get_cursor(win))
+  local line = vim.api.nvim_buf_get_lines(state.input.buf, row - 1, row, false)[1] or ""
+  vim.api.nvim_buf_set_lines(state.input.buf, row - 1, row, false,
+    { line:sub(1, col) .. text .. line:sub(col + 1) })
+  pcall(vim.api.nvim_win_set_cursor, win, { row, col + #text })
+  M.update_input_win()
+end
+
+--- Open the prompt if it is not open yet and leave the cursor ready to type.
+local function ensure_prompt()
+  if state.input.win and vim.api.nvim_win_is_valid(state.input.win) then return end
+  M.open_input(nil, nil, false)
+end
+
+--- Attach an image payload to the next prompt and drop a `[Image N]` marker
+--- where the cursor is, like the OpenCode TUI.
+---@param image { data: string, mime: string, name: string }
+function M.attach_image(image)
+  local attachments = state.input.attachments
+  attachments[#attachments + 1] = image
+  ensure_prompt()
+  M.insert_input_text(string.format("[Image %d] ", #attachments))
+  log.notify(string.format("image attached (%s)", image.name))
+  return true
+end
+
+--- Paste the clipboard image (or attach `path` when one is given).
+---@param path? string image file to attach instead of the clipboard
+---@param silent? boolean do not notify when there is no image (`<C-v>` fallback)
+---@return boolean attached
+function M.paste_image(path, silent)
+  local clipboard = require("opencode-nvim.clipboard")
+  local image, err
+  if path and path ~= "" then
+    image, err = clipboard.file(vim.fn.expand(path))
+  else
+    image, err = clipboard.image()
+  end
+  if not image then
+    -- Not an error: `<C-v>` falls back to its normal meaning when there is no
+    -- image, so this is only a hint for the explicit command.
+    if not silent then log.notify(err or "no image in the clipboard") end
+    return false
+  end
+  image.name = image.name or string.format("image-%d.png", #state.input.attachments + 1)
+  return M.attach_image(image)
+end
+
 function M.close_input()
   local win = state.input.win
   local was_current = win ~= nil and vim.api.nvim_win_is_valid(win)
@@ -800,6 +885,8 @@ function M.submit()
 
   local target = state.input.target
   local selection = state.input.selection
+  local attachments = state.input.attachments
+  state.input.attachments = {}
 
   -- keep a short history (used by <C-p>/<C-n>)
   local history = state.input.history
@@ -826,7 +913,7 @@ function M.submit()
     M.close_input()
   end
 
-  M.send(text, { target = target, selection = selection })
+  M.send(text, { target = target, selection = selection, attachments = attachments })
   M.after_submit()
 end
 
@@ -859,7 +946,7 @@ end
 --------------------------------------------------------------------------------
 
 ---@param text string
----@param opts? { target?: table, selection?: table, delivery?: string, new_session?: boolean }
+---@param opts? { target?: table, selection?: table, attachments?: table[], delivery?: string, new_session?: boolean }
 function M.send(text, opts)
   opts = opts or {}
   state.last_prompt = { text = text, opts = opts }
@@ -869,6 +956,13 @@ function M.send(text, opts)
     line = target and target.cursor and target.cursor[1] or nil,
     selection = opts.selection,
   })
+  -- Pasted/attached images ride along as data: URLs on the same `files` list.
+  for _, image in ipairs(opts.attachments or {}) do
+    files[#files + 1] = {
+      uri = string.format("data:%s;base64,%s", image.mime, image.data),
+      name = image.name,
+    }
+  end
 
   M.remember_code_win()
   M.ensure_buf()
@@ -978,6 +1072,7 @@ function M.clear()
   -- swallow the next turn's placeholder and a stale tool would never render.
   state.input.index = 0
   state.input.draft = ""
+  state.input.attachments = {}
   state.thinking = false
   state.reasoning_text = nil
   state.reasoning_open = false
@@ -1062,14 +1157,51 @@ function M.render_messages(messages)
   M.scroll_to_bottom()
 end
 
+--- One cursor page is a few hundred messages, so a long session needs just a
+--- handful of round trips instead of one request per message.
+local HISTORY_PAGE = 200
+
+--- Fetch a session's messages, following the server cursor.
+---
+--- `limit` caps how many to keep (0 = the whole session). The server pages in
+--- `order = "desc"` (newest first), so the cap keeps the newest messages.
+---@param id string
+---@param limit integer
+---@param cb fun(err: any, messages: table[]?)
+local function fetch_history(id, limit, cb)
+  local collected = {}
+  -- Do not over-fetch when the caller only asked for a few messages.
+  local page_size = limit > 0 and math.min(limit, HISTORY_PAGE) or HISTORY_PAGE
+  local function page(cursor)
+    local params = cursor and { limit = page_size, cursor = cursor }
+      or { limit = page_size, order = "desc" }
+    api.messages(id, params, function(err, response)
+      if err then return cb(err) end
+      local batch = type(response) == "table" and response.data or {}
+      for _, message in ipairs(batch) do collected[#collected + 1] = message end
+      local more = type(response) == "table" and response.cursor and response.cursor.next or nil
+      if #batch == 0 or not more or (limit > 0 and #collected >= limit) then
+        if limit > 0 and #collected > limit then
+          for index = #collected, limit + 1, -1 do collected[index] = nil end
+        end
+        return cb(nil, collected)
+      end
+      page(more)
+    end)
+  end
+  page(nil)
+end
+
 function M.load_history()
   local id = session.id()
   if not id then return end
-  local limit = cfg.get().session.history or 30
-  if limit <= 0 then return end
-  api.messages(id, { limit = limit, order = "desc" }, function(err, page)
+  -- 0 (the default) replays the whole session; a positive number caps it.
+  local limit = cfg.get().session.history or 0
+  if limit < 0 then return end
+  fetch_history(id, limit, function(err, messages)
     if err then return log.debug("history:", err_text(err)) end
-    local messages = type(page) == "table" and page.data or {}
+    -- The session may have moved on while the pages were loading.
+    if session.id() ~= id then return end
     if type(messages) ~= "table" or #messages == 0 then return end
     table.sort(messages, function(a, b)
       local at = (a.time and a.time.created) or 0
@@ -1157,6 +1289,7 @@ end
 --- events (`plugin.updated`, `catalog.updated`, ...) cost nothing.
 local HANDLED = {
   ["opencode.session.changed"] = true,
+  ["opencode.session.context"] = true,
   ["opencode.form.created"] = true,
   ["opencode.form.replied"] = true,
   ["server.connected"] = true,
@@ -1216,6 +1349,10 @@ function M.on_event(ev)
   end
   -- `server.connected` carries no session: it only refreshes the title.
   if kind == "server.connected" then
+    return M.update_title()
+  end
+  -- The context counter lives outside the rendered events.
+  if kind == "opencode.session.context" then
     return M.update_title()
   end
   if not belongs_here(data) then return end

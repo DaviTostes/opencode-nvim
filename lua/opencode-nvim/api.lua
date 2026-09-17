@@ -112,6 +112,11 @@ function M.messages(id, params, cb)
   request({ method = "GET", path = "/api/session/" .. id .. "/message" .. util.query(params) }, cb)
 end
 
+--- Active context of a session: the messages after the last compaction.
+function M.session_context(id, cb)
+  data({ method = "GET", path = "/api/session/" .. id .. "/context" }, cb)
+end
+
 function M.interrupt(id, cb)
   data({ method = "POST", path = "/api/session/" .. id .. "/interrupt", body = {}, timeout = 15000 }, cb)
 end

@@ -76,6 +76,10 @@ end
 local function command(name, fn, opts)
   opts = opts or {}
   opts.desc = opts.desc or "opencode-nvim"
+  -- Visual mode prepends `'<,'>` to whatever you type (`:'<,'>Opencode...`), so
+  -- every command accepts a range. Only :OpencodeAsk/:OpencodeEdit use it; the
+  -- rest ignore it, which beats the E481 "No range allowed" it used to raise.
+  if opts.range == nil and opts.count == nil then opts.range = true end
   vim.api.nvim_create_user_command(name, fn, opts)
 end
 
@@ -114,6 +118,12 @@ function M.create_commands()
   command("OpencodeClose", function() M.close() end, { desc = "close the panel" })
   command("OpencodeFocus", function() M.focus_toggle() end,
     { desc = "switch the cursor between the panel and your code" })
+  command("OpencodeWindow", function() M.focus_ui() end,
+    { desc = "bring the cursor back to the open opencode window (prompt first)" })
+  command("OpencodeImage", function(args)
+    local path = util.trim(args.args)
+    panel.paste_image(path ~= "" and path or nil)
+  end, { nargs = "?", desc = "attach an image: the clipboard, or the given file" })
   command("OpencodeResend", function() M.resend() end, { desc = "send the last prompt again" })
   command("OpencodeClear", function() M.clear() end, { desc = "clear the panel" })
   command("OpencodeDoctor", function() M.doctor() end, { desc = "diagnose a turn that never answers" })
@@ -256,6 +266,13 @@ end
 function M.focus_toggle()
   M._autosetup()
   panel.focus_toggle()
+end
+
+--- Bring the cursor back to whichever plugin window is open: the prompt when it
+--- is open (ready to type), the panel otherwise.
+function M.focus_ui()
+  M._autosetup()
+  return panel.focus_ui()
 end
 
 --- Send the last prompt again (the provider hiccups often).

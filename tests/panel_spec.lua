@@ -235,6 +235,83 @@ test("renders history messages", function()
   assert(text:find("/tmp/h.lua", 1, true), text)
 end)
 
+test("the token counter reports the context window, not the cumulative usage", function()
+  local session = require("opencode-nvim.session")
+  session.current.context_tokens = nil
+
+  -- A step reports the prompt it sent: the whole conversation, cache reads
+  -- included, once.
+  feed("session.step.ended", {
+    tokens = { input = 1000, output = 50, reasoning = 0, cache = { read = 99000, write = 0 } },
+  })
+  settle()
+  assert(session.context_tokens() == 100000, tostring(session.context_tokens()))
+  assert(panel.title():find("100.0k", 1, true), panel.title())
+
+  -- Cumulative usage counts the same context once per turn (and the cache
+  -- again): it must not move the counter.
+  feed("session.usage.updated", {
+    cost = 0.01,
+    tokens = { input = 5000000, output = 100000, cache = { read = 900000000, write = 0 } },
+  })
+  settle()
+  assert(session.context_tokens() == 100000, tostring(session.context_tokens()))
+end)
+
+test("refresh_context reads the last request from the active context", function()
+  local session = require("opencode-nvim.session")
+  local api = require("opencode-nvim.api")
+  local saved = api.session_context
+  api.session_context = function(_, cb)
+    cb(nil, {
+      { type = "assistant", tokens = { input = 10, output = 1, cache = { read = 90, write = 0 } } },
+      { type = "user" },
+      { type = "assistant", tokens = { input = 20, output = 1, cache = { read = 980, write = 0 } } },
+      { type = "user" }, -- the newest message can be the prompt of a running turn
+    })
+  end
+  local done = false
+  session.refresh_context(function() done = true end)
+  api.session_context = saved
+  assert(done, "refresh_context never called back")
+  assert(session.context_tokens() == 1000, tostring(session.context_tokens()))
+end)
+
+test("history replays every page, not just the first", function()
+  local api = require("opencode-nvim.api")
+  local cfg = require("opencode-nvim.config")
+  local saved_messages, saved_history = api.messages, cfg.get().session.history
+  cfg.get().session.history = 0
+
+  local pages = {
+    [""] = {
+      data = {
+        { type = "user", text = "third", time = { created = 3 } },
+        { type = "assistant", time = { created = 4 }, content = { { type = "text", text = "third answer" } } },
+      },
+      cursor = { next = "page-2" },
+    },
+    ["page-2"] = {
+      data = { { type = "user", text = "first", time = { created = 1 } } },
+      cursor = { next = "page-3" },
+    },
+    ["page-3"] = { data = {}, cursor = {} },
+  }
+  api.messages = function(_, params, cb) cb(nil, pages[params.cursor or ""]) end
+
+  plugin.clear()
+  settle()
+  panel.load_history()
+  settle(300)
+
+  api.messages, cfg.get().session.history = saved_messages, saved_history
+  local text = panel_text()
+  assert(text:find("first", 1, true), "the oldest page is missing:\n" .. text)
+  assert(text:find("third answer", 1, true), "the newest page is missing:\n" .. text)
+  assert(text:find("first", 1, true) < text:find("third answer", 1, true),
+    "history is out of order:\n" .. text)
+end)
+
 test("opens the diff popup with patches", function()
   local ok, err = pcall(diff.patches, {
     title = "test",
@@ -684,6 +761,37 @@ test("focus can be switched between the panel and the code", function()
   plugin.close()
 end)
 
+test(":OpencodeWindow returns to the open window, prompt first", function()
+  plugin.close()
+  plugin.open() -- panel + prompt
+  settle()
+  local input, pwin = panel.state.input.win, panel.state.win
+  assert(input and pwin, "the prompt and the panel should be open")
+
+  -- From the code the command lands on the prompt, ready to type.
+  panel.focus_code()
+  settle()
+  assert(vim.api.nvim_get_current_win() ~= input, "focus did not leave the UI")
+  vim.cmd("OpencodeWindow")
+  settle()
+  assert(vim.api.nvim_get_current_win() == input, "did not focus the prompt")
+
+  -- With the prompt closed it falls back to the panel.
+  panel.close_input()
+  panel.focus_code()
+  settle()
+  vim.cmd("OpencodeWindow")
+  settle()
+  assert(vim.api.nvim_get_current_win() == pwin, "did not focus the panel")
+
+  -- With nothing open it is a no-op, not a jump to some other window.
+  plugin.close()
+  local here = vim.api.nvim_get_current_win()
+  vim.cmd("OpencodeWindow")
+  settle()
+  assert(vim.api.nvim_get_current_win() == here, "the command moved the cursor with nothing open")
+end)
+
 test("the panel advertises its keys", function()
   plugin.open({ input = false })
   local footer = vim.api.nvim_win_get_config(panel.state.win).footer or {}
@@ -860,6 +968,55 @@ test("the prompt has a history", function()
   plugin.close()
 end)
 
+test("a pasted image rides along as a data: URL attachment", function()
+  local clipboard = require("opencode-nvim.clipboard")
+  local session = require("opencode-nvim.session")
+  local saved_image, saved_prompt = clipboard.image, session.prompt
+  local sent
+  clipboard.image = function() return { data = "AAAA", mime = "image/png" } end
+  session.prompt = function(text, opts, cb)
+    sent = { text = text, opts = opts }
+    if cb then cb(nil) end
+  end
+
+  plugin.open()
+  panel.state.input.attachments = {}
+  assert(panel.paste_image() == true, "the image was not attached")
+  local text = table.concat(vim.api.nvim_buf_get_lines(panel.state.input.buf, 0, -1, false), "\n")
+  assert(text:find("[Image 1]", 1, true), "the prompt has no image marker: " .. vim.inspect(text))
+
+  panel.submit()
+  settle()
+
+  clipboard.image, session.prompt = saved_image, saved_prompt
+  assert(sent, "nothing was sent")
+  local files = sent.opts.files or {}
+  local image = files[#files]
+  assert(image and image.uri == "data:image/png;base64,AAAA", vim.inspect(files))
+  assert(image.name == "image-1.png", vim.inspect(image))
+  assert(#panel.state.input.attachments == 0, "the attachments were not cleared after sending")
+  plugin.close()
+end)
+
+test("clipboard.file attaches a local image and rejects other files", function()
+  local clipboard = require("opencode-nvim.clipboard")
+  local bytes = "\137PNG\r\n\26\n\0\1\2"
+  local path = vim.fn.tempname() .. ".png"
+  local fd = assert(io.open(path, "wb"))
+  fd:write(bytes)
+  fd:close()
+
+  local image = clipboard.file(path)
+  vim.fn.delete(path)
+  assert(image and image.mime == "image/png", vim.inspect(image))
+  assert(image.data == vim.base64.encode(bytes), tostring(image and image.data))
+  assert(image.name == vim.fn.fnamemodify(path, ":t"), tostring(image.name))
+
+  local other = vim.fn.tempname() .. ".txt"
+  local bad, err = clipboard.file(other)
+  assert(bad == nil and type(err) == "string", vim.inspect({ bad, err }))
+end)
+
 test("pickers mark the current model and agent", function()
   local current_model = { providerID = "p", id = "m" }
   assert(plugin.model_label({ providerID = "p", id = "m" }, current_model) == "● p/m")
@@ -971,20 +1128,25 @@ test("no keymaps are created unless asked for", function()
   assert(vim.tbl_isempty(mapping("<F8>")), "an unrequested keymap was created")
 
   -- every action is reachable as a command
-  for _, name in ipairs({
+  local names = {
     "Opencode", "OpencodeClose", "OpencodeAsk", "OpencodeEdit", "OpencodeActions",
     "OpencodeNew", "OpencodeAttach", "OpencodeSessions", "OpencodeModels", "OpencodeAgents",
     "OpencodeInterrupt", "OpencodeResend", "OpencodeUndo", "OpencodeDiff", "OpencodeClear",
     "OpencodeApproval", "OpencodeApprovalAgent", "OpencodePermissions",
-    "OpencodeEvents", "OpencodeDoctor", "OpencodeHealth", "OpencodeLog",
-  }) do
+    "OpencodeEvents", "OpencodeDoctor", "OpencodeHealth", "OpencodeLog", "OpencodeWindow", "OpencodeImage",
+  }
+  for _, name in ipairs(names) do
     assert(vim.fn.exists(":" .. name) == 2, "missing command :" .. name)
   end
 
-  -- a range (visual mode) is understood by the commands that take one
-  local range_info = vim.api.nvim_get_commands({}).OpencodeAsk
-  assert(range_info and range_info.range ~= nil and range_info.range ~= "",
-    "OpencodeAsk does not accept a range: " .. vim.inspect(range_info and range_info.range))
+  -- Visual mode prepends a range (`:'<,'>Opencode...`), so every command must
+  -- accept one; otherwise it fails with E481 "No range allowed".
+  local commands = vim.api.nvim_get_commands({})
+  for _, name in ipairs(names) do
+    local range_info = commands[name]
+    assert(range_info and range_info.range ~= nil and range_info.range ~= "",
+      name .. " does not accept a range: " .. vim.inspect(range_info and range_info.range))
+  end
   plugin.setup({})
 end)
 

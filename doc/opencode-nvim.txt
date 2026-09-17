@@ -91,7 +91,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
         { action = "shell", resource = "*", effect = "ask" },
       },
     },
-    session = { history = 30, directory = nil },
+    session = { history = 0, directory = nil }, -- 0 = replay the whole session
     context = {
       auto = true,             -- a prompt started from a selection becomes @this
       max_bytes = 204800,      -- limit for attaching an unsaved buffer
@@ -161,7 +161,20 @@ reloads keeping your cursor, and `u` still undoes it.
 :OpencodeFocus					*:OpencodeFocus*
 	Switch the cursor between the panel/prompt and your code. Neovim has no
 	built-in binding for floats; `nvim_set_current_win` or `:wincmd w` also
-	work, this is the round trip.
+	work, this is the round trip. Coming back from your code it focuses the
+	prompt when it is open, the panel otherwise.
+:OpencodeWindow					*:OpencodeWindow*
+	Bring the cursor back to the open opencode window without leaving it
+	first: the prompt when it is open (ready to type), the panel otherwise.
+	Nothing happens when neither is open.
+:OpencodeImage [path]				*:OpencodeImage*
+	Attach an image to the next prompt. Without an argument it pastes the
+	image in the system clipboard (wl-paste/xclip on Linux, osascript on
+	macOS, PowerShell on Windows/WSL) and inserts a `[Image N]` marker in
+	the prompt; the panel sends it as a data: URL (PNG, or the file's own
+	mime). With a path it attaches that local PNG/JPEG/GIF/WebP instead.
+	The server accepts images as attachments, so the model must support
+	image input.
 :OpencodeAsk [text]				*:OpencodeAsk*
 	Ask, with the prompt pre-filled when `text` is given. Accepts a range:
 	from a visual selection use `:'<,'>OpencodeAsk` and the selection is sent
@@ -260,6 +273,8 @@ Inside the prompt:
   <C-j>		newline
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
   <C-Up>, <C-Down>	history of prompts (normal mode: <C-p>, <C-n>)
+  <C-v>		paste an image from the system clipboard (falls back to the
+		normal <C-v> when the clipboard has no image)
   <Esc>		close the prompt and focus the panel (`ui.escape_closes`:
 		"panel", "all" closes everything, "input" just closes)
   <C-c>		cancel the current turn
@@ -381,7 +396,7 @@ require("opencode-nvim").diff()			*opencode-nvim.diff()*
 	Show the diff of the last turn.
 
 require("opencode-nvim").statusline()		*opencode-nvim.statusline()*
-	Short string for the statusline (model, tokens, cost).
+	Short string for the statusline (model, context tokens, cost).
 
 require("opencode-nvim").status()		*opencode-nvim.status()*
 	Table with the current state.

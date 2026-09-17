@@ -44,7 +44,9 @@ M.defaults = {
     },
   },
   session = {
-    history = 30,
+    -- Messages replayed when a session is opened: 0 = the whole session,
+    -- a positive number caps it to the newest N.
+    history = 0,
     directory = nil,
   },
   context = {

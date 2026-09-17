@@ -378,6 +378,8 @@ function M.attach(id, cb)
     if err then return cb(err) end
     M.set_current(info)
     M.start_stream()
+    -- Seed the context-window counter (the session GET does not carry it).
+    M.refresh_context()
     -- Detect whether this session's agent pauses edits for approval.
     local directory = info.location and info.location.directory or M.directory()
     agents_for(directory, function(_, agents)
@@ -399,6 +401,9 @@ function M.refresh(cb)
   api.get_session(M.current.id, function(err, info)
     if not err and info then
       info.approval = M.current.approval
+      -- The context usage is not part of the session GET; keep what the last
+      -- `session.step.ended` (or `refresh_context`) measured.
+      info.context_tokens = M.current.context_tokens
       M.current = info
       -- the panel picks up new tokens/cost/title without replaying history
       -- (on_session ignores a change for the same session)
@@ -437,6 +442,7 @@ function M.revert_last_turn(cb)
             end
             require("opencode-nvim.reload").reload_all()
             M.refresh()
+            M.refresh_context()
             if cb then cb(nil) end
           end)
         end)
@@ -518,6 +524,7 @@ function M.list(cb)
   end)
 end
 
+--- Cumulative session usage (every turn, cache reads included) and cost.
 function M.tokens()
   local current = M.current
   if not current or not current.tokens then return 0, 0 end
@@ -528,15 +535,64 @@ function M.tokens()
   return total, current.cost or 0
 end
 
+--- Tokens of one request's prompt: what actually occupies the context window.
+---
+--- `input` is only the uncached part; the cache reads/writes are the rest of the
+--- same prompt, not a second copy of it.
+local function prompt_tokens(tokens)
+  if type(tokens) ~= "table" then return nil end
+  local cache = tokens.cache or {}
+  local total = (tokens.input or 0) + (cache.read or 0) + (cache.write or 0)
+  if total <= 0 then return nil end
+  return total
+end
+
+--- Context-window usage of the current session: the size of the last request's
+--- prompt.
+---
+--- Deliberately *not* the session's cumulative `tokens`: that is a running sum
+--- of every turn (cache reads included), so the same context is counted once
+--- per turn and a 100k context shows up as millions.
+function M.context_tokens()
+  local current = M.current
+  return current and current.context_tokens or 0
+end
+
+--- Fill in the context-window usage from the server's active context. The
+--- `session.step.ended` event keeps it current while a turn streams; this is
+--- what seeds it when attaching an existing session (or after a revert).
+function M.refresh_context(cb)
+  local current = M.current
+  if not current then return cb and cb(nil) end
+  api.session_context(current.id, function(err, messages)
+    if err then
+      log.debug("context:", vim.inspect(err))
+      return cb and cb(err)
+    end
+    -- The session may have been replaced while the request was in flight.
+    if current ~= M.current then return cb and cb(nil) end
+    for index = #(messages or {}), 1, -1 do
+      local used = prompt_tokens(messages[index].tokens)
+      if used then
+        current.context_tokens = used
+        event.emit({ type = "opencode.session.context", data = current })
+        break
+      end
+    end
+    if cb then cb(nil) end
+  end)
+end
+
 --- Short string for the statusline.
 function M.statusline()
   if not M.current then return "" end
-  local total, cost = M.tokens()
+  local _, cost = M.tokens()
+  local used = M.context_tokens()
   local parts = { "opencode" }
   local model = M.current.model and (M.current.model.id or M.current.model.modelID)
   if model then parts[#parts + 1] = model end
-  if total > 0 then
-    parts[#parts + 1] = string.format("%.1fk tok", total / 1000)
+  if used > 0 then
+    parts[#parts + 1] = string.format("%.1fk tok", used / 1000)
   end
   if cost > 0 then
     parts[#parts + 1] = string.format("$%.4f", cost)
@@ -557,6 +613,16 @@ function M.on_event(ev)
       if info.model then current.model = info.model end
       if info.agent then current.agent = info.agent end
       if info.title then current.title = info.title end
+    end
+  elseif kind == "session.step.ended" then
+    -- Each step reports the prompt it sent: its size is the current context
+    -- window usage (unlike `session.usage.updated`, which is cumulative).
+    if current and sid == current.id then
+      local used = prompt_tokens(info.tokens)
+      if used then
+        current.context_tokens = used
+        event.emit({ type = "opencode.session.context", data = current })
+      end
     end
   elseif kind == "session.execution.succeeded" or kind == "session.execution.failed"
     or kind == "session.execution.interrupted" or kind == "session.idle" then

@@ -26,7 +26,9 @@ Local dev: `vim.opt.rtp:prepend("/home/toast/opencode-nvim")`.
 
 The panel takes the cursor, so its keys (`gd` diff, `r` resend, `zo` unfold,
 `q` close) work right away and streaming never pulls you away;
-`:OpencodeFocus` switches between panel and code. `:OpencodeAsk` and
+`:OpencodeFocus` switches between panel and code (back in your code it focuses
+the open prompt first). `:OpencodeWindow` always brings the cursor back to the
+open opencode window. `:OpencodeAsk` and
 `:OpencodeEdit` accept a range. No keymaps by default — set `vim.g.mapleader`
 before `setup()`.
 
@@ -43,7 +45,9 @@ before `setup()`.
 | `:OpencodeModels` / `:OpencodeAgents` | pick the model / agent |
 | `:OpencodeApproval` / `:OpencodeApprovalAgent` / `:OpencodePermissions` | approval status · create the approval agent · decide pending permissions |
 | `:OpencodeQuestion` | show the waiting question (digit picks, `o` types, `<Esc>` later) |
-| `:OpencodeFocus` / `:OpencodeDoctor` | move the cursor · diagnose a stuck turn |
+| `:OpencodeFocus` / `:OpencodeWindow` | move the cursor · return to the open window |
+| `:OpencodeImage [path]` | paste the clipboard image (or attach a file) to the next prompt |
+| `:OpencodeDoctor` | diagnose a stuck turn |
 | `:OpencodeHealth` / `:OpencodeEvents` / `:OpencodeLog` | connection · event log · log level |
 
 ## Behavior
@@ -58,6 +62,10 @@ before `setup()`.
   opens the diff (`u` undoes the turn, `<CR>` keeps it), or set
   `approval = { review = "popup" }`. Undo needs git; otherwise the diff falls
   back to the working tree.
+- **Images.** Like the TUI, `<C-v>` in the prompt pastes a clipboard image, and
+  `:OpencodeImage [path]` attaches a PNG/JPEG/GIF/WebP. A `[Image N]` marker goes
+  into the prompt and the image rides along as a `data:` URL (the model needs
+  image input).
 - **Stuck turn.** The panel warns at 30s; `<C-c>` interrupts, `r` resends, and
   `:OpencodeDoctor` prints the server, stream, session, last events and error.
 - **Models.** Uses your last TUI model; pin it with
