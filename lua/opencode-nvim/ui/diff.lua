@@ -21,13 +21,29 @@ end
 
 M.close = close
 
+--- Buffer lines cannot contain newlines: split them (callers may pass blocks).
+local function normalize_lines(lines)
+  local out = {}
+  for _, line in ipairs(lines or {}) do
+    if type(line) ~= "string" then line = tostring(line) end
+    if line:find("\n", 1, true) then
+      for piece in (line .. "\n"):gmatch("([^\n]*)\n") do
+        out[#out + 1] = piece
+      end
+    else
+      out[#out + 1] = line
+    end
+  end
+  return out
+end
+
 ---@param opts { title: string, lines: string[], filetype?: string, width?: number, height?: number, keymaps: table[], on_close?: fun() }
 local function open_float(opts)
   close()
 
   local previous_win = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, opts.lines or {})
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, normalize_lines(opts.lines))
   if opts.filetype then vim.bo[buf].filetype = opts.filetype end
   vim.bo[buf].modifiable = false
   vim.bo[buf].bufhidden = "wipe"

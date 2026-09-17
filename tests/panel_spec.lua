@@ -56,6 +56,7 @@ test("setup defines highlights and commands", function()
   assert(vim.fn.hlexists("OpencodeBorder") == 1)
   assert(vim.fn.exists(":Opencode") == 2, "comando :Opencode ausente")
   assert(vim.fn.exists(":OpencodeApprovalAgent") == 2)
+  assert(vim.fn.exists(":OpencodeDoctor") == 2, "the :OpencodeDoctor command is missing")
 end)
 
 test("config exposes the approval agent name", function()
@@ -239,6 +240,27 @@ test("resolve_model falls back to the TUI preferred model", function()
   local known = session.resolve_model({ providerID = "a", id = "b" },
     { { providerID = "a", id = "b", variant = "v" } })
   assert(known and known.id == "b" and known.variant == "v", vim.inspect(known))
+end)
+
+test("a fresh session does not wipe the panel", function()
+  local session = require("opencode-nvim.session")
+  local saved_current, saved_sid = session.current, panel.state.session_id
+
+  plugin.clear()
+  settle()
+  feed("session.execution.started") -- renders the "▸ thinking…" placeholder
+
+  local fresh = { id = "ses_fresh", location = { directory = vim.uv.cwd() }, fresh = true }
+  panel.state.session_id = nil
+  session.current = fresh
+  event.emit({ type = "opencode.session.changed", data = fresh })
+  settle()
+
+  local text = panel_text()
+  assert(text:find("thinking", 1, true), "the prompt was wiped when the session was created:\n" .. text)
+  assert(session.current.fresh == nil, "the fresh flag should be consumed")
+
+  session.current, panel.state.session_id = saved_current, saved_sid
 end)
 
 test("prompt and panel are aligned and do not overlap", function()

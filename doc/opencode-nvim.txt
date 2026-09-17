@@ -153,6 +153,9 @@ Without calling `setup()` the plugin configures itself with the defaults on
 	Inspect the events received from the server (useful for debugging).
 :OpencodeHealth					*:OpencodeHealth*
 	Check the connection, authentication and current session.
+:OpencodeDoctor					*:OpencodeDoctor*
+	Diagnose a turn that never answers: server, event stream, session state,
+	last messages and the last events of the session.
 :OpencodeLog [level]				*:OpencodeLog*
 	Read/set the log level (debug, info, warn, error).
 
@@ -335,6 +338,10 @@ Example: >
     and `r` resends the last prompt. The opencode-go free tier is flaky and
     sometimes returns misleading messages (for example demanding "OpenCode 1.17.0
     or newer"); in practice the same model works again minutes later.
+  - If a turn never answers, the panel warns after 30s and shows the last event
+    received for that session; `:OpencodeDoctor` prints the whole state (server,
+    stream, session, last messages, last events) and `:OpencodeEvents` shows the
+    raw event log. `make probe-hang` reproduces it from a shell.
   - If *no* turn runs at all, check the model. The server default can be a
     blocked free tier model (on opencode-go, `opencode/union-alpha`). Without a
     configured `model` the plugin uses the last model from the TUI; to pin one,

@@ -271,6 +271,9 @@ local function create_session(directory, agent, model, opts, retry, cb)
       end
       return cb(err)
     end
+    -- Transient flag: a brand new session has no history, so the panel must not
+    -- wipe the prompt that is being sent right now.
+    info.fresh = true
     cb(nil, info)
   end)
 end

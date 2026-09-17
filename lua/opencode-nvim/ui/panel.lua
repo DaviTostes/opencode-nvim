@@ -26,6 +26,7 @@ local state = {
   geom = nil,
   session_id = nil,
   thinking = false,
+  stall_text = nil,
   running_since = nil,
   warned_slow = false,
   ticker = nil,
@@ -117,7 +118,11 @@ function M.start_ticker()
     local elapsed = state.running_since and ((vim.uv or vim.loop).now() - state.running_since) / 1000 or 0
     if elapsed > 30 and not state.warned_slow then
       state.warned_slow = true
-      M.renderer():note("no response for 30s — the provider may be slow; <C-c> interrupts", "meta")
+      local text = string.format(
+        "no response for %ds (last event: %s) — the provider may be slow; <C-c> interrupts, r resends, :OpencodeDoctor diagnoses",
+        math.floor(elapsed), last_event_summary())
+      state.stall_text = text
+      M.renderer():note(text, "meta")
       M.scroll_soon()
     end
   end))
@@ -134,7 +139,32 @@ end
 local function clear_thinking(renderer)
   if not state.thinking then return end
   state.thinking = false
-  renderer:drop_last(THINKING_LINE)
+  renderer:remove_line(THINKING_LINE)
+end
+
+--- Takes back the stall warning once something finally arrives.
+local function clear_stall(renderer)
+  if not state.stall_text then return end
+  local text = state.stall_text
+  state.stall_text = nil
+  renderer:remove_line(text)
+end
+
+--- Short summary of the last event that belongs to this session, so a stalled
+--- turn can be told apart from a dead stream.
+local function last_event_summary()
+  local history = event.history()
+  local now = os.time()
+  for index = #history, 1, -1 do
+    local item = history[index]
+    local sid = util.pick_string(item.data or {}, { "sessionID" })
+    if sid == nil or sid == session.id() then
+      local age
+      if item.created then age = now - math.floor(item.created / 1000) end
+      return string.format("%s%s", item.type, age and string.format(" (%ds ago)", age) or "")
+    end
+  end
+  return "none"
 end
 
 local function input_open()
@@ -512,6 +542,7 @@ function M.send(text, opts)
   }, function(err)
     if err then
       clear_thinking(M.renderer())
+      clear_stall(M.renderer())
       M.set_status("error")
       M.renderer():error(err_text(err))
     end
@@ -670,10 +701,19 @@ function M.on_session(info)
   state.model = info.model and (info.model.id or info.model.modelID) or nil
   M.ensure_buf()
   M.update_title()
+
+  -- `fresh` sessions were just created for the prompt being sent: there is no
+  -- history to replay, and clearing here would wipe the user's own message.
+  local fresh = info.fresh == true
+  info.fresh = nil
+
   -- Re-rendering the same session would wipe text that is still streaming.
   if state.session_id == info.id then return end
   state.session_id = info.id
   state.thinking = false
+  state.stall_text = nil
+  if fresh then return end
+
   M.renderer():clear()
   M.load_history()
 end
@@ -755,8 +795,7 @@ function M.on_event(ev)
   if not HANDLED[kind] then return end
   if kind == "opencode.session.changed" then
     return M.on_session(data)
-  end
-  if not belongs_here(data) then return end
+  end  if not belongs_here(data) then return end
 
   local renderer = M.renderer()
 
@@ -764,6 +803,7 @@ function M.on_event(ev)
     M.update_title()
   elseif kind == "session.text.started" then
     clear_thinking(renderer)
+    clear_stall(renderer)
     renderer:finalize()
     M.set_status("running")
   elseif kind == "session.text.delta" then
@@ -772,6 +812,7 @@ function M.on_event(ev)
     renderer:text_finished(util.pick_string(data, { "text" }))
   elseif kind == "session.reasoning.started" then
     clear_thinking(renderer)
+    clear_stall(renderer)
     renderer:finalize()
   elseif kind == "session.reasoning.delta" then
     renderer:stream("dim", event_text(data) or "")
@@ -779,6 +820,7 @@ function M.on_event(ev)
     renderer:finalize()
   elseif kind == "session.tool.input.started" then
     clear_thinking(renderer)
+    clear_stall(renderer)
     renderer:tool_begin(tool_id(data) or "tool", tool_name(data))
   elseif kind == "session.tool.input.delta" then
     renderer:tool_args(tool_id(data) or "tool", event_text(data))
@@ -799,12 +841,14 @@ function M.on_event(ev)
     end
   elseif kind == "session.execution.succeeded" or kind == "session.execution.interrupted" then
     clear_thinking(renderer)
+    clear_stall(renderer)
     renderer:finalize()
     M.set_status("idle")
     M.update_title()
     vim.defer_fn(M.review_turn, 150)
   elseif kind == "session.execution.failed" then
     clear_thinking(renderer)
+    clear_stall(renderer)
     M.set_status("error")
     local message = util.deep_find(data, { "message" })
     if message then

@@ -16,6 +16,9 @@ e2e-approval:
 probe:
 	$(NVIM) -l tests/probe_permissions.lua
 
+probe-hang:
+	PROBE_SECONDS=90 $(NVIM) -l tests/probe_hang.lua
+
 e2e-panel:
 	$(NVIM) -l tests/e2e_panel.lua
 

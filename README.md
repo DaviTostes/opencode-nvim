@@ -87,6 +87,7 @@ Commands:
 :OpencodePermissions    decide permissions left for later
 :OpencodeEvents         events received from the server (debug)
 :OpencodeHealth         live connection check
+:OpencodeDoctor         diagnose a turn that never answers
 :OpencodeLog [level]    log level (debug/info/warn/error)
 ```
 
@@ -215,6 +216,7 @@ These were verified against `0.0.0-beta-19271` and are handled in the code:
 | `session.text.ended` carries the full part text | the renderer repairs dropped deltas with it |
 | Snapshots (turn diff and file restore on revert) rely on **git** | falls back to the working tree diff and warns outside a repo |
 | The `opencode-go` provider is flaky and sometimes returns misleading errors ("OpenCode 1.17.0 or newer is required to use the free tier", "Endpoint is unavailable") | the real reason shows in the panel and `r` resends the last prompt |
+| A provider request can hang without any event for minutes | the panel shows the elapsed time, warns at 30s with the last event of the session, and `:OpencodeDoctor` prints the whole state |
 
 ## Tests
 
@@ -224,6 +226,7 @@ make e2e            # real protocol: text streaming (one tiny prompt)
 make e2e-approval   # real approval flow, with popup and revert (one prompt)
 make e2e-panel      # full interactive flow through the panel (one prompt)
 make probe          # config/agents/permissions probe (no tokens spent)
+make probe-hang     # what the server does during a turn that never answers
 make lint           # syntax check of every .lua file
 ```
 

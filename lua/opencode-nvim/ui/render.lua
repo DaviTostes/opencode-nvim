@@ -170,17 +170,21 @@ function R:block(kind, text)
   self:flush()
 end
 
---- Removes the last line when it is exactly `text` (used to take back the
---- "thinking" placeholder).
+--- Removes the first line that equals `text` (used to take back the "thinking"
+--- placeholder and the stall warning).
 ---@return boolean removed
-function R:drop_last(text)
-  if #self.lines == 0 or self.lines[#self.lines] ~= text then return false end
-  self.lines[#self.lines] = nil
-  self.kinds[#self.kinds] = nil
-  self.committed = math.min(self.committed, #self.lines)
-  self.drawn = math.min(self.drawn, #self.lines)
-  self:draw()
-  return true
+function R:remove_line(text)
+  for index = 1, #self.lines do
+    if self.lines[index] == text then
+      table.remove(self.lines, index)
+      table.remove(self.kinds, index)
+      self.committed = math.min(self.committed, #self.lines)
+      self.drawn = math.min(self.drawn, #self.lines)
+      self:draw()
+      return true
+    end
+  end
+  return false
 end
 
 function R:user(text)

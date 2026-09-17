@@ -88,6 +88,7 @@ function M.create_commands()
   command("OpencodePermissions", function() permission.select() end, { desc = "pending permissions" })
   command("OpencodeEvents", function() M.events() end, { desc = "events received from the server" })
   command("OpencodeHealth", function() M.health() end, { desc = "check the connection to opencode" })
+  command("OpencodeDoctor", function() M.doctor() end, { desc = "diagnose a turn that never answers" })
   command("OpencodeLog", function(args)
     local level = util.trim(args.args)
     if level == "" then
@@ -482,6 +483,134 @@ end
 
 function M.statusline()
   return session.statusline()
+end
+
+--- Compact one-line token summary.
+local function tokens_summary(tokens)
+  tokens = tokens or {}
+  local cache = tokens.cache or {}
+  return string.format("in=%d out=%d reasoning=%d cache_read=%d cache_write=%d",
+    tokens.input or 0, tokens.output or 0, tokens.reasoning or 0, cache.read or 0, cache.write or 0)
+end
+
+--- Live diagnosis for a turn that never answers: is the server reachable, is
+--- the stream alive, what did the session actually do, what was the last event?
+function M.doctor()
+  local lines = { "opencode-nvim doctor", "" }
+  local pending, shown = 0, false
+
+  local function show()
+    if shown then return end
+    shown = true
+    require("opencode-nvim.ui.diff").text({
+      title = "opencode · doctor",
+      lines = lines,
+      width = 0.9,
+      height = 0.8,
+    })
+  end
+
+  local function finish()
+    pending = pending - 1
+    if pending <= 0 then show() end
+  end
+
+  local function job(fn)
+    pending = pending + 1
+    fn(function(line)
+      if line then lines[#lines + 1] = line end
+      finish()
+    end)
+  end
+
+  local info = session.info()
+  local directory = info and info.location and info.location.directory
+
+  job(function(cb)
+    api.health(function(err, health, server)
+      if err then return cb("server: UNREACHABLE — " .. err_text(err)) end
+      cb(string.format("server: %s  version=%s  pid=%s", tostring(server.url),
+        tostring(health.version), tostring(health.pid)))
+    end)
+  end)
+
+  job(function(cb)
+    local sse = require("opencode-nvim.sse")
+    cb(string.format("event stream: %s  connected=%s", sse.status(), tostring(sse.connected())))
+  end)
+
+  job(function(cb)
+    if not info then return cb("session: none yet") end
+    local model = info.model and string.format("%s/%s", info.model.providerID, info.model.id) or "?"
+    cb(string.format("session: %s  agent=%s  model=%s  approval=%s  dir=%s",
+      info.id, tostring(info.agent), model, tostring(info.approval), tostring(directory)))
+  end)
+
+  job(function(cb)
+    if not info then return cb(nil) end
+    api.get_session(info.id, function(err, fresh)
+      if err then return cb("session GET: " .. err_text(err)) end
+      local updated = fresh.time and fresh.time.updated
+      cb(string.format("session state: cost=%s  %s%s", tostring(fresh.cost),
+        tokens_summary(fresh.tokens),
+        updated and ("  updated " .. os.date("%H:%M:%S", math.floor(updated / 1000))) or ""))
+    end)
+  end)
+
+  job(function(cb)
+    if not info then return cb(nil) end
+    api.messages(info.id, { limit = 3, order = "desc" }, function(err, page)
+      if err then return cb("messages: " .. err_text(err)) end
+      local out = {}
+      for index, message in ipairs(page.data or {}) do
+        if index > 3 then break end
+        local detail = tostring(message.type)
+        if message.type == "assistant" then
+          detail = detail .. string.format("  finish=%s", tostring(message.finish))
+          local reason = util.deep_find(message.error, { "message", "type" })
+          if reason then detail = detail .. "  error=" .. tostring(reason) end
+        end
+        out[#out + 1] = string.format("  %s  (created %s)", detail,
+          os.date("%H:%M:%S", math.floor((message.time and message.time.created or 0) / 1000)))
+      end
+      cb("last messages:\n" .. (#out > 0 and table.concat(out, "\n") or "  (none)"))
+    end)
+  end)
+
+  job(function(cb)
+    cb(string.format("pending permissions: %d", #permission.pending()))
+  end)
+
+  job(function(cb)
+    local history = event.history()
+    local now = os.time()
+    local out = {}
+    for index = #history, 1, -1 do
+      local item = history[index]
+      local sid = util.pick_string(item.data or {}, { "sessionID" })
+      if not info or not sid or sid == info.id then
+        local age = item.created and (now - math.floor(item.created / 1000)) or nil
+        out[#out + 1] = string.format("  %-34s %s", item.type, age and (age .. "s ago") or "?")
+        if #out >= 8 then break end
+      end
+    end
+    cb("last events for this session:\n" .. (#out > 0 and table.concat(out, "\n")
+      or "  (none — the stream may be pointing at another session/server)"))
+  end)
+
+  job(function(cb)
+    local approval = cfg.get().approval or {}
+    cb(string.format("config: agent=%s  approval.agent=%s  review=%s  autoread=%s",
+      tostring(cfg.get().agent), tostring(approval.agent), tostring(approval.review), tostring(vim.o.autoread)))
+  end)
+
+  -- Never leave the user without an answer, even if a probe hangs.
+  vim.defer_fn(function()
+    if shown then return end
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "(some checks did not answer in time)"
+    show()
+  end, 8000)
 end
 
 function M.complete(findstart, base)
