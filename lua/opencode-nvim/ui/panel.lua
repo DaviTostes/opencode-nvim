@@ -17,6 +17,45 @@ local THINKING_LINE = "▸ thinking…"
 local THINKING_HEADER = "▸ thinking"
 local GUTTER = "│ "
 
+--- True while any flavour of insert mode is active.
+local function inserting()
+  return vim.fn.mode(1):find("^[iR]") ~= nil
+end
+
+--- Work that needs the panel window to be the current one.
+---
+--- Switching the current window from insert mode makes Neovim attribute the
+--- insert mode to the buffer that became current ("the panel entered insert
+--- mode") and the cursor goes with it. Measured with a real UI: `nvim_win_call`
+--- emits that mode change, `vim.fn.win_execute()` does not switch the focus at
+--- all. So: never `nvim_win_call` while inserting — queue it for InsertLeave.
+local pending_window_commands = {}
+
+local function flush_window_commands()
+  if inserting() then return end
+  local list = pending_window_commands
+  pending_window_commands = {}
+  for _, item in ipairs(list) do
+    if vim.api.nvim_win_is_valid(item.win) then
+      pcall(vim.fn.win_execute, item.win, item.command)
+    end
+  end
+end
+
+vim.api.nvim_create_autocmd("InsertLeave", {
+  callback = function() vim.schedule(flush_window_commands) end,
+})
+
+---@param win integer
+---@param command string Ex command to run in that window
+local function when_not_inserting(win, command)
+  if not (win and vim.api.nvim_win_is_valid(win)) then return end
+  if not inserting() then
+    return pcall(vim.fn.win_execute, win, command)
+  end
+  pending_window_commands[#pending_window_commands + 1] = { win = win, command = command }
+end
+
 local state = {
   buf = nil,
   win = nil,
@@ -58,15 +97,13 @@ function M.scroll_to_bottom()
   local win = state.win
   if not (win and vim.api.nvim_win_is_valid(win)) then return end
   local last = vim.api.nvim_buf_line_count(state.buf)
-  -- Done inside win_call so it also works while the panel is *not* focused
-  -- (the usual case: you are editing code and the answer streams). An unfocused
-  -- window does not scroll just because the cursor moved, which is why
-  -- following the stream used to work only sometimes.
-  pcall(vim.api.nvim_win_call, win, function()
-    pcall(vim.api.nvim_win_set_cursor, win, { last, 0 })
-    -- `zb` puts that line at the bottom of the window, whatever a fold hides
-    pcall(vim.cmd, "normal! zb")
-  end)
+  -- Moving another window's cursor is invisible to the mode and works without
+  -- focus, so this runs always: the panel keeps following while you type.
+  pcall(vim.api.nvim_win_set_cursor, win, { last, 0 })
+  -- Making the window show that line needs it to be current, which must not
+  -- happen during insert mode (see `when_not_inserting`). `winrestview` is an
+  -- Ex call, so unlike `normal!` it does not put that window in normal mode.
+  when_not_inserting(win, string.format("call winrestview({'lnum': %d})", last))
 end
 
 --- True when the last line of the buffer is on screen, i.e. the user is
@@ -77,9 +114,9 @@ end
 local function window_at_bottom()
   local win = state.win
   if not (win and vim.api.nvim_win_is_valid(win)) then return true end
-  return vim.api.nvim_win_call(win, function()
-    return vim.fn.line("w$") >= vim.fn.line("$")
-  end)
+  -- `line()` takes a window id, so this is a read that never switches windows
+  -- (it runs on every draw: switching here was the whole bug).
+  return vim.fn.line("w$", win) >= vim.fn.line("$", win)
 end
 
 --- Kept for callers that just want the view to catch up.
@@ -100,13 +137,9 @@ local function fold_reasoning(renderer)
   -- lines right after the fold and drop it.
   renderer:draw()
   local follow = window_at_bottom()
-  pcall(vim.api.nvim_win_call, win, function()
-    -- `:fold` *closes*; the way to create one from a script is `zf` over a
-    -- visual range. Creating it moves the cursor, which is fine now that
-    -- following is read from the window view.
-    pcall(vim.cmd, string.format("normal! %dGV%dGzf", block.first, block.last))
-    pcall(vim.cmd, "normal! zc")
-  end)
+  -- `:fold` *closes*; creating one from a script is `zf` over a visual range.
+  -- Done without switching the focus, and deferred while you are typing.
+  when_not_inserting(win, string.format("normal! %dGV%dGzf | normal! zc", block.first, block.last))
   if follow then M.scroll_to_bottom() end
 end
 
@@ -671,10 +704,20 @@ function M.insert_newline()
 end
 
 function M.close_input()
-  if state.input.win and vim.api.nvim_win_is_valid(state.input.win) then
-    pcall(vim.api.nvim_win_close, state.input.win, true)
+  local win = state.input.win
+  local was_current = win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_get_current_win() == win
+  if was_current then
+    pcall(vim.api.nvim_win_close, win, true)
+  elseif win and vim.api.nvim_win_is_valid(win) then
+    pcall(vim.api.nvim_win_close, win, true)
   end
   state.input.win = nil
+  -- Closing the window you were inserting in must not leave the insert mode
+  -- behind in whatever window Neovim focuses next (that is how the cursor ended
+  -- up typing in the panel).
+  if was_current then
+    pcall(vim.cmd, "stopinsert")
+  end
 end
 
 function M.input_text()
@@ -685,7 +728,11 @@ end
 
 function M.submit()
   local text = M.input_text()
-  if util.is_blank(text) then return M.close_input() end
+  if util.is_blank(text) then
+    -- <CR> on an empty prompt is "leave the prompt", exactly like <Esc>: it must
+    -- not drop the focus (and the insert mode) somewhere unspecified.
+    return M.escape()
+  end
 
   local target = state.input.target
   local selection = state.input.selection

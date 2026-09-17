@@ -5,13 +5,11 @@
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.rtp:prepend(root)
 
-local uv = vim.uv or vim.loop
 local workdir = vim.fs.joinpath(vim.fn.tempname())
 vim.fn.mkdir(workdir, "p")
 
 local plugin = require("opencode-nvim")
 local event = require("opencode-nvim.event")
-local panel = require("opencode-nvim.ui.panel")
 local session = require("opencode-nvim.session")
 local util = require("opencode-nvim.util")
 
@@ -74,7 +72,6 @@ io.write("   popup:\n    " .. text:gsub("\n", "\n    ") .. "\n")
 report("the question shows up in a popup", text:find("Python", 1, true) ~= nil, text)
 
 -- Answer with the first option.
-local answered = vim.api.nvim_feedkeys
 vim.api.nvim_feedkeys("1", "x", false)
 wait(function() return state.finished end, 120000)
 report("the turn finished after answering", state.finished, "timeout waiting for the turn")

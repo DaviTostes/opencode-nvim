@@ -18,6 +18,9 @@ e2e-approval:
 probe:
 	$(NVIM) -l tests/probe_permissions.lua
 
+ui-smoke:
+	tests/ui_smoke.sh
+
 e2e-form:
 	$(NVIM) -l tests/e2e_form.lua
 

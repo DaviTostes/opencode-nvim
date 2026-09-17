@@ -79,7 +79,6 @@ local function reload_file(path)
           return
         end
         if vim.bo[bufnr].buftype ~= "" then return end
-        local view = vim.api.nvim_win_call
         vim.api.nvim_buf_call(bufnr, function()
           pcall(vim.cmd, "silent! checktime")
         end)
