@@ -331,22 +331,38 @@ end
 function M.select_session()
   session.list(function(err, sessions)
     if err then return fail("sessions", err) end
-    local items, map = { "+ new session" }, {}
-    for _, info in ipairs(sessions or {}) do
-      local title = (info.title or "(untitled)"):gsub("%s+", " ")
-      if #title > 60 then title = title:sub(1, 57) .. "..." end
-      local label = string.format("%s  %s  [%s]", info.id, title, info.agent or "?")
-      items[#items + 1] = label
-      map[label] = info
-    end
-    picker.pick(items, { name = "opencode sessions" }, function(choice)
-      if not choice then return end
-      if choice == "+ new session" then return M.new_session() end
-      local info = map[choice]
-      if not info then return end
-      session.attach(info.id, function(attach_err)
-        if attach_err then return fail("attach", attach_err) end
-        panel.open({ input = false })
+    api.active_sessions(function(active_err, active)
+      if active_err then
+        log.debug("active sessions: " .. err_text(active_err))
+        active = {}
+      end
+      active = active or {}
+      local items, map, seen = {}, {}, {}
+      for _, info in ipairs(sessions or {}) do
+        local title = (info.title or "(untitled)"):gsub("%s+", " ")
+        if #title > 60 then title = title:sub(1, 57) .. "..." end
+        local prefix = active[info.id] and "● " or "○ "
+        local label = prefix .. title
+        -- Ids are hidden, so titles can repeat: keep both pickable.
+        local seen_count = seen[label]
+        if seen_count then
+          seen[label] = seen_count + 1
+          label = string.format("%s%s (%d)", prefix, title, seen_count + 1)
+        else
+          seen[label] = 1
+        end
+        items[#items + 1] = label
+        map[label] = info
+      end
+      if #items == 0 then return log.notify("no sessions") end
+      picker.pick(items, { name = "opencode sessions" }, function(choice)
+        if not choice then return end
+        local info = map[choice]
+        if not info then return end
+        session.attach(info.id, function(attach_err)
+          if attach_err then return fail("attach", attach_err) end
+          panel.open({ input = false })
+        end)
       end)
     end)
   end)

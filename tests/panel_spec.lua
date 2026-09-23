@@ -112,6 +112,59 @@ test("renders a failed tool", function()
   assert(text:find("negado", 1, true), text)
 end)
 
+test("a tool inside a text part does not duplicate the answer", function()
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "hello " })
+  -- the server emits the tool call in the middle of the text part...
+  feed("session.tool.input.started", { id = "mid", name = "shell" })
+  feed("session.text.delta", { delta = "world" })
+  feed("session.tool.input.ended", { id = "mid", text = '{"command":"echo hi"}' })
+  feed("session.tool.called", { id = "mid", name = "shell", input = { command = "echo hi" } })
+  feed("session.tool.success", { id = "mid", content = { { type = "text", text = "hi" } } })
+  -- ...and the part ends with its full text.
+  feed("session.text.ended", { text = "hello world" })
+  feed("session.execution.succeeded")
+  settle()
+
+  local text = panel_text()
+  -- the answer must appear exactly once, with the tool after it (the order the
+  -- message is stored in), not a fragment then the whole text again
+  local first = text:find("hello world", 1, true)
+  assert(first, "the answer is missing:\n" .. text)
+  assert(not text:find("hello world", first + 1, true), "the answer was duplicated:\n" .. text)
+  local tool_at = text:find("shell", 1, true)
+  assert(tool_at and tool_at > first, "the tool must come after the text:\n" .. text)
+end)
+
+test("a truncated answer is repaired from the stored message at turn end", function()
+  local api = require("opencode-nvim.api")
+  local saved = api.messages
+  api.messages = function(_, _, cb)
+    cb(nil, {
+      data = {
+        { type = "assistant", content = { { type = "text", text = "the answer is truncated here" } } },
+      },
+    })
+  end
+
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "the answer is trunc" })
+  -- the final delta/`text.ended` was lost
+  feed("session.execution.succeeded")
+  settle()
+
+  api.messages = saved
+  local text = panel_text()
+  assert(text:find("the answer is truncated here", 1, true), text)
+  assert(not text:find("the answer is trunc\n", 1, true), "the short fragment was left behind:\n" .. text)
+end)
+
 test("ignores events from other sessions", function()
   local before = panel_text()
   feed("session.text.delta", { delta = "MUST NOT APPEAR", sessionID = "ses_other" })
@@ -607,6 +660,23 @@ test("the stall warning names the last event of the session", function()
   assert(text:find("late answer", 1, true), text)
 end)
 
+test("the running timer switches to minutes after a minute", function()
+  local saved_status, saved_since = panel.state.status, panel.state.running_since
+  local now = (vim.uv or vim.loop).now()
+  panel.state.status = "running"
+
+  panel.state.running_since = now - 42 * 1000
+  assert(panel.title():find("42s", 1, true), panel.title())
+
+  panel.state.running_since = now - (60 + 32) * 1000
+  assert(panel.title():find("1m 32s", 1, true), panel.title())
+
+  panel.state.running_since = now - (2 * 3600 + 3 * 60) * 1000
+  assert(panel.title():find("2h 3m", 1, true), panel.title())
+
+  panel.state.status, panel.state.running_since = saved_status, saved_since
+end)
+
 test("reasoning around a tool call stays in one block", function()
   plugin.clear()
   settle()
@@ -1017,6 +1087,20 @@ test("clipboard.file attaches a local image and rejects other files", function()
   assert(bad == nil and type(err) == "string", vim.inspect({ bad, err }))
 end)
 
+test("completing @ shows the placeholders with a description", function()
+  local items = panel.complete(0, "@th")
+  assert(#items == 1 and items[1].word == "@this", vim.inspect(items))
+  assert(type(items[1].menu) == "string" and items[1].menu ~= "", vim.inspect(items[1]))
+
+  local words = {}
+  for _, item in ipairs(panel.complete(0, "@di")) do words[#words + 1] = item.word end
+  assert(vim.tbl_contains(words, "@diagnostics") and vim.tbl_contains(words, "@diff"), vim.inspect(words))
+
+  -- the plain string items must still work without an `@`
+  local plain = panel.complete(0, "re")
+  assert(type(plain) == "table", vim.inspect(plain))
+end)
+
 test("pickers mark the current model and agent", function()
   local current_model = { providerID = "p", id = "m" }
   assert(plugin.model_label({ providerID = "p", id = "m" }, current_model) == "● p/m")
@@ -1026,6 +1110,37 @@ test("pickers mark the current model and agent", function()
   assert(plugin.agent_label({ id = "build", mode = "primary" }, "build") == "● build")
   assert(plugin.agent_label({ id = "explore", mode = "subagent" }, "build") == nil)
   assert(plugin.agent_label({ id = "plan", mode = "primary", description = "plans" }, "build") == "plan  plans")
+end)
+
+test("the session picker shows titles with a running marker and no ids", function()
+  local picker = require("opencode-nvim.ui.picker")
+  local session = require("opencode-nvim.session")
+  local api = require("opencode-nvim.api")
+  local saved_pick, saved_list, saved_active = picker.pick, session.list, api.active_sessions
+
+  local captured
+  picker.pick = function(items) captured = items end
+  session.list = function(cb)
+    cb(nil, {
+      { id = "ses_a", title = "Running one", agent = "build" },
+      { id = "ses_b", title = "Idle one" },
+      { id = "ses_c", title = "Idle one" },
+    })
+  end
+  api.active_sessions = function(cb) cb(nil, { ses_a = { type = "running" } }) end
+
+  plugin.select_session()
+
+  picker.pick, session.list, api.active_sessions = saved_pick, saved_list, saved_active
+
+  assert(captured and #captured == 3, vim.inspect(captured))
+  assert(captured[1] == "● Running one", captured[1])
+  assert(captured[2] == "○ Idle one", captured[2])
+  assert(captured[3] == "○ Idle one (2)", captured[3])
+  for _, item in ipairs(captured) do
+    assert(not item:find("ses_", 1, true), "an id leaked into " .. item)
+    assert(not item:find("+ new session", 1, true), item)
+  end
 end)
 
 test("session creation always calls back (error instead of hanging)", function()

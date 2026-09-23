@@ -188,7 +188,8 @@ reloads keeping your cursor, and `u` still undoes it.
 :OpencodeAttach {id}				*:OpencodeAttach*
 	Attach an existing session (including one open in the TUI).
 :OpencodeSessions				*:OpencodeSessions*
-	Pick a session of the current directory.
+	Pick a session of the current directory. The title is shown, marked ●
+	when a turn is running and ○ when it is idle.
 :OpencodeModels					*:OpencodeModels*
 	Pick the session model (the current one is marked ●).
 :OpencodeAgents					*:OpencodeAgents*
@@ -272,6 +273,9 @@ Inside the prompt:
   <CR>		send (on an empty prompt it does nothing)
   <C-j>		newline
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
+  @		typing `@` opens the placeholder menu with a description of
+		each one (@this, @buffer, @buffers, @diagnostics, @diff);
+		paths complete as plain text, without the `@`
   <C-Up>, <C-Down>	history of prompts (normal mode: <C-p>, <C-n>)
   <C-v>		paste an image from the system clipboard (falls back to the
 		normal <C-v> when the clipboard has no image)

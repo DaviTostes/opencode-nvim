@@ -185,6 +185,38 @@ function R:text_finished(text)
   self:draw()
 end
 
+--- Rewrites the last contiguous text block with the authoritative `text`.
+---
+--- `session.text.ended` already repairs a part, but a dropped event (or a stream
+--- reconnect at the end of a turn) can leave the answer short. This runs once
+--- when the turn ends, and only when the last block really is text: a trailing
+--- tool means there is nothing to fix (and its line indices must not move).
+---@param text string
+---@return boolean repaired
+function R:repair_last_text(text)
+  local last = #self.lines
+  if last == 0 or self.kinds[last] ~= "text" or type(text) ~= "string" then return false end
+  local start = last
+  while start > 1 and self.kinds[start - 1] == "text" do start = start - 1 end
+  local current = {}
+  for index = start, last do current[#current + 1] = self.lines[index] end
+  if table.concat(current, "\n") == text then return false end
+  local lines, kinds = {}, {}
+  for index = 1, start - 1 do
+    lines[#lines + 1] = self.lines[index]
+    kinds[#kinds + 1] = self.kinds[index]
+  end
+  for _, line in ipairs(util.lines(text)) do
+    lines[#lines + 1] = line
+    kinds[#kinds + 1] = "text"
+  end
+  self.lines, self.kinds = lines, kinds
+  self:rewind(start)
+  self:finalize()
+  self:draw()
+  return true
+end
+
 function R:stream(kind, text, prefix)
   self:delta(kind, text, prefix)
   self._draw()

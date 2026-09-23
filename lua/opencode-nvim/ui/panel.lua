@@ -70,6 +70,14 @@ local state = {
   reasoning_text = nil,
   pending_tools = {},
   pending_order = {},
+  -- A text part is streaming: tools that arrive now belong *after* it in the
+  -- message, so they queue here instead of splitting the text block.
+  text_open = false,
+  deferred_tools = {},
+  deferred_order = {},
+  -- Whether this turn streamed any text (the turn-end reconciliation only runs
+  -- when there is a text block that could need repairing).
+  turn_had_text = false,
   stall_text = nil,
   running_since = nil,
   warned_slow = false,
@@ -181,6 +189,18 @@ end
 -- Panel window
 --------------------------------------------------------------------------------
 
+--- Elapsed time of a running turn: seconds up to a minute, then "1m 32s"
+--- (and "1h 2m" past an hour).
+---@param seconds integer
+---@return string
+local function fmt_elapsed(seconds)
+  if seconds < 60 then return string.format("%ds", seconds) end
+  local minutes = math.floor(seconds / 60)
+  local rest = seconds % 60
+  if minutes < 60 then return string.format("%dm %ds", minutes, rest) end
+  return string.format("%dh %dm", math.floor(minutes / 60), minutes % 60)
+end
+
 --- Panel title. Status first (it is what changes and what you glance at),
 --- then agent/model, then the cheap-to-skip numbers.
 function M.title()
@@ -189,7 +209,7 @@ function M.title()
     local elapsed = state.running_since
       and math.floor(((vim.uv or vim.loop).now() - state.running_since) / 1000)
       or 0
-    parts[#parts + 1] = elapsed > 0 and string.format("● %ds", elapsed) or "●"
+    parts[#parts + 1] = elapsed > 0 and ("● " .. fmt_elapsed(elapsed)) or "●"
   elseif state.status == "error" then
     parts[#parts + 1] = "!"
   end
@@ -244,6 +264,9 @@ end
 --- Inline (header + gutter) and only when the part is complete, so it never
 --- interleaves with tool output and never flickers word by word.
 local function flush_reasoning(renderer)
+  -- Reasoning can also arrive in the middle of a text part: writing it now
+  -- would split the text block (and duplicate the answer on `text.ended`).
+  if state.text_open then return end
   local text = state.reasoning_text
   state.reasoning_text = nil
   if not text or text == "" then return end
@@ -259,6 +282,12 @@ end
 --- reasoning around a tool call stays in a single block (and the header gets
 --- the useful summary on the first render).
 local function flush_tool(renderer, id, name, args)
+  -- The server can emit a tool call in the middle of a text part, but in the
+  -- message it comes *after* it. Writing the header now would split the text
+  -- block, and the `text.ended` repair would then see only the last fragment
+  -- and append the whole text after it (the duplicated answer). Wait for the
+  -- part to end instead.
+  if state.text_open then return end
   -- keep the order: reasoning written before the tool it surrounds
   flush_reasoning(renderer)
   local pending = state.pending_tools[id]
@@ -282,6 +311,54 @@ local function flush_all_tools(renderer)
   for _, id in ipairs(order) do
     if state.pending_tools[id] then flush_tool(renderer, id) end
   end
+end
+
+--- Ends the current text part and writes the tools that were queued during it.
+---
+--- Called on `session.text.ended` and when the turn ends (a part can be cut
+--- short by an error), so nothing stays hidden behind `text_open`.
+local function flush_deferred(renderer)
+  state.text_open = false
+  -- Reasoning queued during the part comes before the tools it surrounds.
+  flush_reasoning(renderer)
+  flush_all_tools(renderer)
+  local order = state.deferred_order or {}
+  state.deferred_order = {}
+  for _, id in ipairs(order) do
+    local result = state.deferred_tools[id]
+    state.deferred_tools[id] = nil
+    if result then
+      -- `flush_all_tools` already wrote the header when the tool was pending;
+      -- this is a no-op for it and creates the header otherwise.
+      flush_tool(renderer, id, result.name)
+      renderer:tool_end(id, result.ok, result.body)
+    end
+  end
+end
+
+--- Last-resort repair when a turn ends: compare the answer we streamed with the
+--- message the server stored and fix the last text block if a final event was
+--- lost. A no-op when the turn had no text or the last block is not text.
+local function reconcile_text(renderer)
+  if not state.turn_had_text then return end
+  state.turn_had_text = false
+  local id = session.id()
+  if not id then return end
+  api.messages(id, { limit = 3, order = "desc" }, function(err, page)
+    if err then return end
+    for _, message in ipairs((type(page) == "table" and page.data) or {}) do
+      if message.type == "assistant" then
+        local last
+        for _, part in ipairs(message.content or {}) do
+          if type(part) == "table" and part.type == "text" and type(part.text) == "string" then
+            last = part.text
+          end
+        end
+        if last then renderer:repair_last_text(last) end
+        return
+      end
+    end
+  end)
 end
 
 --- Takes back the stall warning once something finally arrives.
@@ -621,6 +698,12 @@ function M.input_buf()
     buffer = buf,
     callback = function() M.update_input_win() end,
   })
+  -- Typing `@` opens the placeholder menu right away (the popup is what makes
+  -- `@this`/`@buffer` discoverable; `<C-x><C-o>` also works).
+  vim.api.nvim_create_autocmd("TextChangedI", {
+    buffer = buf,
+    callback = function() M.maybe_complete() end,
+  })
 
   return buf
 end
@@ -651,7 +734,37 @@ function M.input_history(direction)
   vim.cmd("startinsert!")
 end
 
---- Completion for `@` placeholders, files and buffers.
+--- `@` placeholders and what each one attaches. The description shows up in the
+--- completion menu, so `@t` tells you what `@this` does before you pick it.
+local PLACEHOLDERS = {
+  { word = "@this", menu = "file or selection at the cursor",
+    info = "the file (and selection) the cursor is in" },
+  { word = "@buffer", menu = "the current buffer",
+    info = "the current buffer; attached as a file when it has unsaved changes" },
+  { word = "@buffers", menu = "the open buffers",
+    info = "the list of open, listed buffers" },
+  { word = "@diagnostics", menu = "diagnostics at the cursor",
+    info = "the diagnostics of the file (or the selection), one per line" },
+  { word = "@diff", menu = "the working tree diff",
+    info = "`git diff` of the session directory" },
+}
+
+--- Completion items for the `@` placeholders matching `prefix`.
+---@param prefix string
+---@return table[]
+function M.placeholder_items(prefix)
+  local items = {}
+  for _, item in ipairs(PLACEHOLDERS) do
+    if item.word:sub(1, #prefix) == prefix then
+      items[#items + 1] = { word = item.word, menu = item.menu, info = item.info, kind = "k" }
+    end
+  end
+  return items
+end
+
+--- Completion for `@` placeholders and plain file paths.
+---@param findstart integer
+---@param base? string
 function M.complete(findstart, base)
   if findstart == 1 then
     local line = vim.api.nvim_get_current_line()
@@ -661,11 +774,13 @@ function M.complete(findstart, base)
     return col - #word
   end
 
-  local items = {}
-  for _, name in ipairs({ "this", "buffer", "buffers", "diagnostics", "diff" }) do
-    local candidate = "@" .. name
-    if candidate:sub(1, #base) == base then items[#items + 1] = candidate end
+  base = base or ""
+  -- `@` is only for the placeholders (they are expanded before sending); paths
+  -- complete as plain text, exactly as they are typed.
+  if base:sub(1, 1) == "@" then
+    return M.placeholder_items(base)
   end
+  local items = {}
   local ok, files = pcall(vim.fn.getcompletion, base, "file")
   if ok and type(files) == "table" then
     for _, file in ipairs(files) do
@@ -674,6 +789,26 @@ function M.complete(findstart, base)
     end
   end
   return items
+end
+
+--- Opens the placeholder menu as soon as `@` (and the following word) is typed.
+---
+--- `<C-x><C-o>` keeps working (it uses the same list); this is what makes the
+--- placeholders discoverable without knowing the key.
+function M.maybe_complete()
+  local buf = state.input.buf
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then return end
+  if vim.api.nvim_get_current_buf() ~= buf then return end
+  if vim.fn.pumvisible() == 1 then return end
+  if not vim.fn.mode():find("^[iR]") then return end
+
+  local line = vim.api.nvim_get_current_line()
+  local col = vim.api.nvim_win_get_cursor(0)[2]
+  local prefix = line:sub(1, col):match("@[%w]*$")
+  if not prefix then return end
+  local items = M.placeholder_items(prefix)
+  if #items == 0 then return end
+  vim.fn.complete(col - #prefix + 1, items)
 end
 
 function M.input_height()
@@ -1076,8 +1211,12 @@ function M.clear()
   state.thinking = false
   state.reasoning_text = nil
   state.reasoning_open = false
+  state.text_open = false
+  state.turn_had_text = false
   state.pending_tools = {}
   state.pending_order = {}
+  state.deferred_tools = {}
+  state.deferred_order = {}
   state.stall_text = nil
   M.renderer():clear()
 end
@@ -1230,8 +1369,12 @@ function M.on_session(info)
   state.thinking = false
   state.reasoning_text = nil
   state.reasoning_open = false
+  state.text_open = false
+  state.turn_had_text = false
   state.pending_tools = {}
   state.pending_order = {}
+  state.deferred_tools = {}
+  state.deferred_order = {}
   state.stall_text = nil
   M.renderer():clear()
   M.load_history()
@@ -1365,6 +1508,8 @@ function M.on_event(ev)
     clear_thinking(renderer)
     clear_stall(renderer)
     state.reasoning_open = false
+    state.text_open = true
+    state.turn_had_text = true
     renderer:finalize()
     M.set_status("running")
   elseif kind == "session.text.delta" then
@@ -1373,6 +1518,7 @@ function M.on_event(ev)
     renderer:stream("text", event_text(data) or "")
   elseif kind == "session.text.ended" then
     renderer:text_finished(util.pick_string(data, { "text" }))
+    flush_deferred(renderer)
   elseif kind == "session.reasoning.started" then
     clear_stall(renderer)
     state.reasoning_text = ""
@@ -1403,13 +1549,24 @@ function M.on_event(ev)
     flush_tool(renderer, tool_id(data) or "tool", tool_name(data), data.args or data.input)
   elseif kind == "session.tool.success" then
     local id = tool_id(data) or "tool"
-    if state.pending_tools[id] then flush_tool(renderer, id) end
-    renderer:tool_end(id, true, tool_body(data))
+    if state.text_open then
+      state.deferred_tools[id] = { ok = true, body = tool_body(data), name = tool_name(data) }
+      state.deferred_order[#state.deferred_order + 1] = id
+    else
+      if state.pending_tools[id] then flush_tool(renderer, id) end
+      renderer:tool_end(id, true, tool_body(data))
+    end
   elseif kind == "session.tool.failed" then
     local id = tool_id(data) or "tool"
-    if state.pending_tools[id] then flush_tool(renderer, id) end
-    renderer:tool_end(id, false, tool_body(data))
+    if state.text_open then
+      state.deferred_tools[id] = { ok = false, body = tool_body(data), name = tool_name(data) }
+      state.deferred_order[#state.deferred_order + 1] = id
+    else
+      if state.pending_tools[id] then flush_tool(renderer, id) end
+      renderer:tool_end(id, false, tool_body(data))
+    end
   elseif kind == "session.execution.started" then
+    state.turn_had_text = false
     M.set_status("running")
     if not state.thinking then
       state.thinking = true
@@ -1417,22 +1574,23 @@ function M.on_event(ev)
     end
   elseif kind == "session.execution.succeeded" or kind == "session.execution.interrupted" then
     flush_reasoning(renderer)
-    flush_all_tools(renderer)
+    flush_deferred(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)
     state.reasoning_open = false
-    state.pending_tools = {}
     renderer:finalize()
+    reconcile_text(renderer)
     M.set_status("idle")
     M.update_title()
     vim.defer_fn(M.review_turn, 150)
   elseif kind == "session.execution.failed" then
     flush_reasoning(renderer)
-    flush_all_tools(renderer)
+    flush_deferred(renderer)
     clear_thinking(renderer)
     clear_stall(renderer)
     state.reasoning_open = false
-    state.pending_tools = {}
+    renderer:finalize()
+    reconcile_text(renderer)
     M.set_status("error")
     local message = util.deep_find(data, { "message" })
     if message then

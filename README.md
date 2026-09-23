@@ -54,7 +54,8 @@ before `setup()`.
 
 - **Context.** `:'<,'>OpencodeAsk`, or asking on a line, sends the file, cursor,
   selection, filetype, `modified` flag and diagnostic count. `@this`,
-  `@buffer`, `@buffers`, `@diagnostics`, `@diff` are optional markers.
+  `@buffer`, `@buffers`, `@diagnostics`, `@diff` are optional markers; typing
+  `@` in the prompt opens a menu describing each one.
 - **Edits.** `:'<,'>OpencodeEdit` describes a change; `<CR>` approves the diff,
   writes the file and reloads the buffer keeping your cursor (`u` undoes).
   `:OpencodeActions` offers explain, find bugs, tests, refactor, docs, commit.

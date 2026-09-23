@@ -89,6 +89,13 @@ function M.list_sessions(params, cb)
   data({ method = "GET", path = "/api/session" .. util.query(params) }, cb)
 end
 
+--- Sessions with a turn running right now, keyed by session id. Sessions absent
+--- from the result are inactive.
+---@param cb fun(err: any, active: table<string, table>?)
+function M.active_sessions(cb)
+  data({ method = "GET", path = "/api/session/active" }, cb)
+end
+
 ---@param body table `title`, `agent`, `model`, `location`, `permissions`, `metadata`
 function M.create_session(body, cb)
   data({ method = "POST", path = "/api/session", body = body, timeout = 60000 }, cb)
