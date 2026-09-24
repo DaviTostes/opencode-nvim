@@ -68,6 +68,10 @@ local state = {
   thinking = false,
   reasoning_open = false,
   reasoning_text = nil,
+  -- A reasoning part is streaming (started but not ended). The server opens the
+  -- text part before `reasoning.ended`, so text is held while this is true.
+  reasoning_active = false,
+  held_text = nil,
   pending_tools = {},
   pending_order = {},
   -- A text part is streaming: tools that arrive now belong *after* it in the
@@ -264,9 +268,11 @@ end
 --- Inline (header + gutter) and only when the part is complete, so it never
 --- interleaves with tool output and never flickers word by word.
 local function flush_reasoning(renderer)
-  -- Reasoning can also arrive in the middle of a text part: writing it now
-  -- would split the text block (and duplicate the answer on `text.ended`).
-  if state.text_open then return end
+  -- A text part that already wrote lines must not be split (the `text.ended`
+  -- repair would then see only the last fragment and duplicate the answer). The
+  -- one exception is a text part still held waiting for exactly this reasoning:
+  -- nothing was written yet, so the reasoning goes first, as in the message.
+  if state.text_open and state.held_text == nil then return end
   local text = state.reasoning_text
   state.reasoning_text = nil
   if not text or text == "" then return end
@@ -276,6 +282,22 @@ local function flush_reasoning(renderer)
   renderer:finalize()
   state.reasoning_open = false
   fold_reasoning(renderer)
+end
+
+--- Writes the text part that was held while its reasoning part streamed.
+---
+--- `fallback` is the authoritative text from `text.ended`, used when no delta
+--- was seen at all so the answer cannot be dropped.
+local function release_held_text(renderer, fallback)
+  local held = state.held_text
+  state.held_text = nil
+  if held == nil then return end
+  -- The reasoning (if any) was flushed just before this, so the placeholder is
+  -- either the reasoning header or still to be taken back.
+  clear_thinking(renderer)
+  state.reasoning_open = false
+  local text = held ~= "" and held or fallback
+  if type(text) == "string" and text ~= "" then renderer:stream("text", text) end
 end
 
 --- Tool headers are deferred until their arguments are complete, so the
@@ -319,8 +341,12 @@ end
 --- short by an error), so nothing stays hidden behind `text_open`.
 local function flush_deferred(renderer)
   state.text_open = false
+  state.reasoning_active = false
   -- Reasoning queued during the part comes before the tools it surrounds.
   flush_reasoning(renderer)
+  -- A text part still held (its reasoning never ended) is written after the
+  -- reasoning and before the tools, which is the message order.
+  release_held_text(renderer)
   flush_all_tools(renderer)
   local order = state.deferred_order or {}
   state.deferred_order = {}
@@ -1211,6 +1237,8 @@ function M.clear()
   state.thinking = false
   state.reasoning_text = nil
   state.reasoning_open = false
+  state.reasoning_active = false
+  state.held_text = nil
   state.text_open = false
   state.turn_had_text = false
   state.pending_tools = {}
@@ -1369,6 +1397,8 @@ function M.on_session(info)
   state.thinking = false
   state.reasoning_text = nil
   state.reasoning_open = false
+  state.reasoning_active = false
+  state.held_text = nil
   state.text_open = false
   state.turn_had_text = false
   state.pending_tools = {}
@@ -1503,24 +1533,43 @@ function M.on_event(ev)
   local renderer = M.renderer()
 
   if kind == "session.text.started" then
-    flush_reasoning(renderer)
-    flush_all_tools(renderer)
-    clear_thinking(renderer)
     clear_stall(renderer)
-    state.reasoning_open = false
     state.text_open = true
     state.turn_had_text = true
+    if state.reasoning_active then
+      -- The server opens the text part while its reasoning part is still
+      -- streaming (both run concurrently). The stored message keeps the
+      -- reasoning *before* the text, so hold the text and let the reasoning
+      -- land first; `session.reasoning.ended` releases it.
+      state.held_text = ""
+    else
+      flush_reasoning(renderer)
+      flush_all_tools(renderer)
+      clear_thinking(renderer)
+      state.reasoning_open = false
+    end
     renderer:finalize()
     M.set_status("running")
   elseif kind == "session.text.delta" then
-    clear_thinking(renderer)
-    state.reasoning_open = false
-    renderer:stream("text", event_text(data) or "")
+    if state.held_text ~= nil then
+      state.held_text = state.held_text .. (event_text(data) or "")
+    else
+      clear_thinking(renderer)
+      state.reasoning_open = false
+      renderer:stream("text", event_text(data) or "")
+    end
   elseif kind == "session.text.ended" then
-    renderer:text_finished(util.pick_string(data, { "text" }))
+    local full = util.pick_string(data, { "text" })
+    state.reasoning_active = false
+    -- Flush the reasoning (its own `ended` may have been dropped) before the
+    -- held text, so the reasoning still lands first.
+    flush_reasoning(renderer)
+    release_held_text(renderer, full)
+    renderer:text_finished(full)
     flush_deferred(renderer)
   elseif kind == "session.reasoning.started" then
     clear_stall(renderer)
+    state.reasoning_active = true
     state.reasoning_text = ""
     renderer:finalize()
   elseif kind == "session.reasoning.delta" then
@@ -1529,7 +1578,9 @@ function M.on_event(ev)
     -- header). It is written once, inline, when the part ends.
     state.reasoning_text = (state.reasoning_text or "") .. (event_text(data) or "")
   elseif kind == "session.reasoning.ended" then
+    state.reasoning_active = false
     flush_reasoning(renderer)
+    release_held_text(renderer)
   elseif kind == "session.tool.input.started" then
     -- Deferred: rendering now would split the reasoning around the call.
     clear_stall(renderer)
@@ -1567,6 +1618,12 @@ function M.on_event(ev)
     end
   elseif kind == "session.execution.started" then
     state.turn_had_text = false
+    state.reasoning_active = false
+    -- A held text part from a previous turn would otherwise leak here.
+    if state.held_text ~= nil then
+      release_held_text(renderer)
+      renderer:finalize()
+    end
     M.set_status("running")
     if not state.thinking then
       state.thinking = true

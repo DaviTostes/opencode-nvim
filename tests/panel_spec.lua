@@ -709,6 +709,95 @@ test("reasoning around a tool call stays in one block", function()
   assert(not text:find("▸ The", 1, true), "the reasoning fragment leaked as a header:\n" .. text)
 end)
 
+test("text is held until the reasoning part before it ends", function()
+  plugin.clear()
+  settle()
+  -- Live capture: the server opens the text part *before* `reasoning.ended`
+  -- (the two parts stream concurrently) even though the stored message keeps
+  -- the reasoning first. Regression: the reasoning was appended after the
+  -- answer (the "▸ thinking" block at the end) and the turn-end repair could no
+  -- longer see the text block.
+  feed("session.execution.started")
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "first thought\n" })
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "the answer " })
+  feed("session.reasoning.delta", { delta = "second thought" })
+  feed("session.text.delta", { delta = "continues" })
+  feed("session.reasoning.ended")
+  feed("session.text.delta", { delta = " and ends" })
+  feed("session.text.ended", { text = "the answer continues and ends" })
+  settle()
+
+  local lines = vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false)
+  local text = table.concat(lines, "\n")
+  local header, reasoning_at, answer_at = 0
+  for index, line in ipairs(lines) do
+    if line == "▸ thinking" then header = header + 1 end
+    if line:find("│ first thought", 1, true) then reasoning_at = index end
+    if line:find("the answer continues and ends", 1, true) then answer_at = index end
+  end
+  assert(header == 1, "expected a single reasoning header:\n" .. text)
+  assert(reasoning_at, "the reasoning is missing:\n" .. text)
+  assert(answer_at, "the answer is missing:\n" .. text)
+  assert(reasoning_at < answer_at, "the reasoning came after the answer:\n" .. text)
+  assert(text:find("│ first thought\n│ second thought", 1, true),
+    "the reasoning was split into fragments:\n" .. text)
+end)
+
+test("a truncated answer after a reasoning part is repaired at turn end", function()
+  local api = require("opencode-nvim.api")
+  local saved = api.messages
+  api.messages = function(_, _, cb)
+    cb(nil, {
+      data = {
+        { type = "assistant", content = { { type = "text", text = "the answer is truncated here" } } },
+      },
+    })
+  end
+
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "a thought" })
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "the answer is trunc" })
+  feed("session.reasoning.ended")
+  -- the final delta/`text.ended` was lost
+  feed("session.execution.succeeded")
+  settle()
+
+  api.messages = saved
+  local text = panel_text()
+  assert(text:find("the answer is truncated here", 1, true), text)
+  -- the reasoning must still sit above the repaired answer
+  local reasoning_at = text:find("│ a thought", 1, true)
+  local answer_at = text:find("the answer is truncated here", 1, true)
+  assert(reasoning_at and answer_at and reasoning_at < answer_at,
+    "the reasoning moved below the answer:\n" .. text)
+end)
+
+test("a dropped reasoning end still puts the reasoning first", function()
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "a thought" })
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "the answer" })
+  -- `session.reasoning.ended` never arrives; the text part ends anyway
+  feed("session.text.ended", { text = "the answer" })
+  feed("session.execution.succeeded")
+  settle()
+
+  local text = panel_text()
+  local reasoning_at = text:find("│ a thought", 1, true)
+  local answer_at = text:find("the answer", 1, true)
+  assert(reasoning_at and answer_at and reasoning_at < answer_at,
+    "the reasoning came after the answer:\n" .. text)
+end)
+
 --- Is the last line of the panel buffer on screen? (`w$` is the last
 --- *displayed* line, so folds do not confuse the check.)
 local function at_bottom()
