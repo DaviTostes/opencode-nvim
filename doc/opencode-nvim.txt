@@ -78,8 +78,8 @@ Without calling `setup()` the plugin configures itself with the defaults on
     model = nil,               -- nil = the last model used in the TUI
                                -- (e.g. { providerID = "opencode-go", id = "deepseek-v4.1-flash" })
     permissions = {            -- rules sent when the session is created
-      edit = "ask",            -- (the V2 beta ignores this: see |opencode-nvim-approval|)
-      shell = "ask",
+      edit = "ask",            -- the session ruleset is enforced by the server
+      shell = "ask",           -- (dropped when `approval = false`: see |opencode-nvim-approval|)
     },
     approval = {
       review = "notify",       -- "notify" (no focus stealing) | "popup" | false
@@ -368,6 +368,8 @@ To tune it: >
   approval = { review = "notify" }   -- warn only, no popup
   approval = { review = false }      -- no review after the turn
   approval = { auto_detect = false, agent = "my-agent" }
+  approval = false                   -- no approval flow at all: the session is
+                                     -- created without the ask ruleset
 <
 Approved edits are written and open buffers reload on their own
 (`reload.enabled`); Neovim's `undo` still works on the buffer.
@@ -453,8 +455,10 @@ Example: >
 These V2 beta divergences are already handled by the plugin, but they help to
 understand odd logs:
 
-  - `permissions` in `POST /api/session` is ignored by the server; the real
-    approval comes from the agent rules.
+  - `permissions` in `POST /api/session` *is* enforced by this server (the beta
+    notes used to say otherwise). It is the default `edit`/`shell` = ask ruleset
+    that opens the approval popup; `approval = false` stops sending it, so the
+    session falls back to the server's permissive default.
   - The permission reply expects the `reply` key (the OpenAPI says `decision`);
     the plugin sends `reply` and falls back to `decision` on a 400.
   - `GET /api/agent` is per location and only complete after the location is

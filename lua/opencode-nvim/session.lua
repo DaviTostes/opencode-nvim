@@ -282,6 +282,15 @@ end
 local function finalize_agent(info, cb)
   local directory = info.location and info.location.directory or M.directory()
   local approval = cfg.approval()
+
+  -- `approval = false`: never enable the approval gate, even if the session's
+  -- agent asks for it (the user opted out of the whole flow).
+  if not cfg.approval_enabled() then
+    info.approval = false
+    M.set_current(info)
+    return cb(nil, info)
+  end
+
   -- Wait for whichever agent tells us the location's config has been read.
   local wait_for = info.agent or approval.agent or cfg.get().agent
 
@@ -384,7 +393,7 @@ function M.attach(id, cb)
     local directory = info.location and info.location.directory or M.directory()
     agents_for(directory, function(_, agents)
       local item = find_agent(agents, info.agent)
-      info.approval = item ~= nil and agent_asks_for_edit(item)
+      info.approval = cfg.approval_enabled() and item ~= nil and agent_asks_for_edit(item) or false
       M.set_current(info)
       cb(nil, info)
     end, info.agent)

@@ -107,12 +107,19 @@ M.defaults = {
 
 M.options = vim.deepcopy(M.defaults)
 
+--- Whether `setup()` supplied `permissions` explicitly.
+---
+--- The default ruleset exists to drive the approval flow, so `approval = false`
+--- drops it; an explicit `permissions` always wins.
+M.explicit_permissions = false
+
 ---@param opts? table
 ---@return table
 function M.setup(opts)
   opts = opts or {}
   local permissions = opts.permissions
   M.options = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), opts)
+  M.explicit_permissions = permissions ~= nil
   if permissions ~= nil then M.options.permissions = permissions end
   log.setup(M.options.log)
   return M.options
@@ -144,6 +151,13 @@ function M.approval()
   return approval
 end
 
+--- Whether the approval flow is on. `approval = false` (or nil) turns it all
+--- off: no default ask ruleset, no review popup and no agent auto-detection.
+---@return boolean
+function M.approval_enabled()
+  return M.options.approval ~= false and M.options.approval ~= nil
+end
+
 --- Ruleset sent when creating a session.
 ---
 --- A plain map (`{ edit = "ask" }`) is expanded on top of a copy of the
@@ -151,6 +165,12 @@ end
 --- whether the server appends or replaces the session ruleset.
 ---@return table[]|nil
 function M.permission_ruleset()
+  -- The default ruleset (`edit`/`shell` = ask) is what drives the in-editor
+  -- approval popup. With the approval flow off it must not be sent, otherwise
+  -- the server pauses on every edit and shell even though you asked not to be
+  -- bothered. A `permissions` you set yourself is always honoured.
+  if not M.approval_enabled() and not M.explicit_permissions then return nil end
+
   local permissions = M.options.permissions
   if permissions == nil or permissions == false then return nil end
 

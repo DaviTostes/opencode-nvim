@@ -1278,6 +1278,41 @@ test("approval = false disables the whole approval flow", function()
   cfg.setup({ approval = saved })
 end)
 
+test("approval = false drops the default session ask ruleset", function()
+  local cfg = require("opencode-nvim.config")
+  local saved = cfg.get().approval
+
+  -- Default (approval on): the ask ruleset is sent to the server, which is what
+  -- opens the in-editor approval popup.
+  cfg.setup({})
+  local ruleset = cfg.permission_ruleset()
+  assert(type(ruleset) == "table", "the default ruleset is missing")
+  local asks = 0
+  for _, rule in ipairs(ruleset) do
+    if rule.action == "edit" and rule.effect == "ask" then asks = asks + 1 end
+  end
+  assert(asks == 1, "the default ruleset does not ask before editing")
+
+  -- Regression: `approval = false` used to only disable review and the agent,
+  -- while the default ask ruleset was still sent, so the server paused on every
+  -- edit and shell even though the user asked not to be bothered.
+  cfg.setup({ approval = false })
+  assert(cfg.approval_enabled() == false, "approval_enabled() should be false")
+  assert(cfg.permission_ruleset() == nil, "the ask ruleset survived approval = false")
+
+  -- An explicit `permissions` always wins, even with approval off.
+  cfg.setup({ approval = false, permissions = { edit = "ask" } })
+  local explicit = cfg.permission_ruleset()
+  assert(type(explicit) == "table", "an explicit permissions was dropped")
+  local found = false
+  for _, rule in ipairs(explicit) do
+    if rule.action == "edit" and rule.effect == "ask" then found = true end
+  end
+  assert(found, "the explicit ask rule is missing:\n" .. vim.inspect(explicit))
+
+  cfg.setup({ approval = saved })
+end)
+
 test("tool_output = false hides the tool body (no diffs in the panel)", function()
   local cfg = require("opencode-nvim.config")
   plugin.clear()

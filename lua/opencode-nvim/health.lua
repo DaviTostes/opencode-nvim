@@ -59,7 +59,11 @@ function M.check()
   if ok_cfg then
     local ruleset = cfg.permission_ruleset()
     if ruleset == nil then
-      vim.health.warn("permissions = false: no in-editor approval")
+      if cfg.approval_enabled() then
+        vim.health.info("no session permission rules; approval comes from the agent rules only")
+      else
+        vim.health.info("approval = false: no in-editor approval")
+      end
     else
       local asks = {}
       for _, rule in ipairs(ruleset) do
