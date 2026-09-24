@@ -17,9 +17,12 @@ end
 function M.state_dir()
   local configured = options().state_dir
   if configured and configured ~= "" then return configured end
-  local base = vim.env.XDG_STATE_HOME
+  -- NOTE: vim.env / vim.fn are NOT allowed in fast event context (vim.system
+  -- callback, uv timer). uv.os_getenv is fast-safe.
+  local uv = vim.uv or vim.loop
+  local base = uv.os_getenv("XDG_STATE_HOME")
   if not base or base == "" then
-    base = vim.fs.joinpath(vim.env.HOME or "~", ".local", "state")
+    base = vim.fs.joinpath(uv.os_getenv("HOME") or "~", ".local", "state")
   end
   return vim.fs.joinpath(base, "opencode")
 end
@@ -32,9 +35,13 @@ end
 ---@return table? service registration
 function M.read_service()
   local path = M.service_file()
-  local ok, lines = pcall(vim.fn.readfile, path)
-  if not ok or type(lines) ~= "table" or #lines == 0 then return nil end
-  local data = require("opencode-nvim.util").decode(table.concat(lines, "\n"))
+  -- Fast-safe: vim.fn.readfile is forbidden in fast event context, io.open is fine.
+  local fh = io.open(path, "r")
+  if not fh then return nil end
+  local content = fh:read("*a")
+  fh:close()
+  if not content or content == "" then return nil end
+  local data = require("opencode-nvim.util").decode(content)
   if type(data) ~= "table" or type(data.url) ~= "string" then return nil end
   return data
 end
@@ -78,7 +85,7 @@ end
 ---@param server opencode.http.Server
 ---@param cb fun(err: string?, info: table?)
 function M.probe(server, cb, timeout)
-  http.request(server, { method = "GET", path = "/api/health", timeout = timeout or 3000 },
+  http.request(server, { method = "GET", path = "/api/info", timeout = timeout or 3000 },
     function(err, status, _, text)
       if err then return cb(err) end
       if status ~= 200 then return cb("health responded " .. tostring(status)) end
@@ -108,33 +115,37 @@ local function autostart(cb)
     return cb(string.format("'%s' not found in PATH (adjust server.command)", command))
   end
   log.debug("starting/validating the service via", command)
-  vim.system({ command, "api", "get", "/api/health" }, { text = true, timeout = 60000 }, function()
-    -- The service writes its address to service.json while starting.
-    local deadline = (vim.uv or vim.loop).now() + (options().start_timeout or 15000)
-    -- Forward declaration: `attempt` below refers to `retry`, and a `local
-    -- function` declared after its use would resolve to a (nil) global.
-    local retry
-    local function attempt()
-      local server = M.server_from_service(M.read_service())
-      if server then
-        M.probe(server, function(err)
-          if not err then
-            log.debug("service ready at", server.url)
-            return adopt(server)
-          end
+  vim.system({ command, "api", "get", "/api/info" }, { text = true, timeout = 60000 }, function()
+    -- vim.system callbacks run in fast event context: re-schedule to the main
+    -- loop before touching vim.fn / vim.env / vim.defer_fn.
+    vim.schedule(function()
+      -- The service writes its address to service.json while starting.
+      local deadline = (vim.uv or vim.loop).now() + (options().start_timeout or 15000)
+      -- Forward declaration: `attempt` below refers to `retry`, and a `local
+      -- function` declared after its use would resolve to a (nil) global.
+      local retry
+      local function attempt()
+        local server = M.server_from_service(M.read_service())
+        if server then
+          M.probe(server, function(err)
+            if not err then
+              log.debug("service ready at", server.url)
+              return adopt(server)
+            end
+            retry()
+          end, 1500)
+        else
           retry()
-        end, 1500)
-      else
-        retry()
+        end
       end
-    end
-    retry = function()
-      if (vim.uv or vim.loop).now() > deadline then
-        return cb("could not start the OpenCode service")
+      retry = function()
+        if (vim.uv or vim.loop).now() > deadline then
+          return cb("could not start the OpenCode service")
+        end
+        vim.defer_fn(attempt, 250)
       end
-      vim.defer_fn(attempt, 250)
-    end
-    attempt()
+      attempt()
+    end)
   end)
 end
 
