@@ -215,7 +215,8 @@ reloads keeping your cursor, and `u` still undoes it.
 	Show the question that is waiting for an answer. The `question` tool does not
 	print anything: it creates a form, and the plugin turns it into a picker where
 	a digit picks an option, `o` types a custom answer and <Esc> leaves it for
-	later.
+	later. When the question allows several answers, the picker becomes a
+	checkbox list (<Tab>/1-9 toggle, <CR> submits).
 :OpencodeEvents					*:OpencodeEvents*
 	Inspect the events received from the server (useful for debugging).
 :OpencodeHealth					*:OpencodeHealth*
@@ -287,7 +288,15 @@ In the question popup:
   <CR>		pick the option on the current line
   1-9		pick that option
   o		answer with your own text (when the question allows it)
-  <Esc>		answer later (:OpencodeQuestion brings it back)
+  <Esc>, q	answer later (:OpencodeQuestion brings it back)
+
+When the question allows several answers at once (`multiselect`), the popup is a
+checkbox list instead:
+  <Tab>		toggle the option on the current line
+  1-9		toggle that option
+  o		add a typed answer to the list
+  <CR>		submit every checked option
+  <Esc>, q	answer later
 
 In the permission/review popups:
   <CR>, y	allow once

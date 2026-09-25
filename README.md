@@ -44,7 +44,7 @@ before `setup()`.
 | `:OpencodeNew` / `:OpencodeAttach {id}` / `:OpencodeSessions` | new · attach · pick a session |
 | `:OpencodeModels` / `:OpencodeAgents` | pick the model / agent |
 | `:OpencodeApproval` / `:OpencodeApprovalAgent` / `:OpencodePermissions` | approval status · create the approval agent · decide pending permissions |
-| `:OpencodeQuestion` | show the waiting question (digit picks, `o` types, `<Esc>` later) |
+| `:OpencodeQuestion` | show the waiting question (digit picks, `o` types, `<Esc>` later; multiselect toggles with `<Tab>`/digits) |
 | `:OpencodeFocus` / `:OpencodeWindow` | move the cursor · return to the open window |
 | `:OpencodeImage [path]` | paste the clipboard image (or attach a file) to the next prompt |
 | `:OpencodeDoctor` | diagnose a stuck turn |

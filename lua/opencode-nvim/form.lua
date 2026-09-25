@@ -39,6 +39,12 @@ function M.is_choice(field)
   return (field.type == "string" or field.type == "multiselect") and #(field.options or {}) > 0
 end
 
+--- True when more than one option can be checked at the same time.
+---@return boolean
+function M.is_multi(field)
+  return field.type == "multiselect" or field.multiple == true
+end
+
 --- Text shown for a field: its title and description.
 ---@return string[]
 function M.field_lines(field)
@@ -46,13 +52,14 @@ function M.field_lines(field)
   if field.title and field.title ~= "" then lines[#lines + 1] = field.title end
   if field.description and field.description ~= "" then lines[#lines + 1] = field.description end
   if #lines == 0 then lines[#lines + 1] = tostring(field.key or "?") end
+  if M.is_multi(field) then lines[#lines + 1] = "(select all that apply)" end
   return lines
 end
 
 --- Value to send for a picked option (multiselect expects a list).
 ---@return any
 function M.answer_value(field, picked)
-  if field.type == "multiselect" then
+  if M.is_multi(field) then
     local values = {}
     for _, option in ipairs(picked or {}) do
       values[#values + 1] = option.value
@@ -95,6 +102,9 @@ local function ask_field(form, fields, index, answers)
   end
 
   local function answered(value)
+    -- An empty multiselect selection is no answer at all: treat it like <Esc>
+    -- so a required field re-asks instead of sending an empty list.
+    if type(value) == "table" and #value == 0 then value = nil end
     if value ~= nil then answers[field.key] = value end
     if value == nil and field.required then
       log.notify(string.format("'%s' is required", tostring(field.title or field.key)))
@@ -108,18 +118,24 @@ local function ask_field(form, fields, index, answers)
 
   if M.is_choice(field) then
     local options = M.options_of(field)
+    local multi = M.is_multi(field)
     return ui.choose({
       title = title,
       body = M.field_lines(field),
       options = options,
+      multi = multi,
+      allow_other = field.custom and true or false,
       on_choice = function(picked)
+        if multi then
+          return answered(M.answer_value(field, picked or {}))
+        end
         answered(picked and M.answer_value(field, { options[picked] }) or nil)
       end,
-      on_other = field.custom and function()
+      on_other = (not multi and field.custom) and function()
         vim.ui.input({ prompt = (field.title or field.key) .. ": " }, function(text)
           answered(text)
         end)
-      end,
+      end or nil,
     })
   elseif field.type == "boolean" then
     return ui.choose({

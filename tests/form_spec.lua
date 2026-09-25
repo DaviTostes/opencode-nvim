@@ -34,6 +34,9 @@ local event = require("opencode-nvim.event")
 local form = require("opencode-nvim.form")
 local session = require("opencode-nvim.session")
 
+-- A required field re-asks with a notification; keep it out of the test output.
+require("opencode-nvim.log").notify = function() end
+
 plugin.setup({ server = { autostart = false }, approval = { review = false } })
 session.current = {
   id = "ses_test",
@@ -108,6 +111,74 @@ test("picking an option answers the form", function()
   assert(replies[1].form == "frm_1", vim.inspect(replies[1]))
   assert(replies[1].answer.q0 == "Lua", vim.inspect(replies[1].answer))
   assert(#form.pending() == 0, "the form is still pending")
+end)
+
+local MULTI = {
+  id = "frm_multi",
+  sessionID = "ses_test",
+  title = "Questions",
+  metadata = { kind = "question" },
+  fields = {
+    {
+      key = "q1",
+      type = "multiselect",
+      title = "Checks",
+      description = "Pick formatting previews",
+      custom = true,
+      options = {
+        { value = "Diff", label = "Diff" },
+        { value = "Subagent", label = "Subagent" },
+      },
+    },
+  },
+}
+
+test("a multiselect toggles several options before answering", function()
+  replies = {}
+  event.emit({ type = "form.created", data = { form = MULTI } })
+  settle()
+  local text, buf = popup_text()
+  assert(text:find("[ ] Diff", 1, true), text)
+  assert(text:find("select all that apply", 1, true), text)
+
+  -- Toggling keeps the popup open and marks the option.
+  vim.api.nvim_feedkeys("1", "x", false)
+  settle()
+  vim.api.nvim_feedkeys("2", "x", false)
+  settle()
+  local marked = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+  assert(marked:find("[x] Diff", 1, true), marked)
+  assert(marked:find("[x] Subagent", 1, true), marked)
+  assert(#replies == 0, "toggling must not answer yet")
+
+  -- <CR> submits every checked option.
+  vim.api.nvim_feedkeys("\r", "x", false)
+  settle()
+  assert(#replies == 1, "expected one reply, got " .. #replies)
+  local answer = replies[1].answer.q1
+  assert(type(answer) == "table" and #answer == 2, vim.inspect(answer))
+  assert(answer[1] == "Diff" and answer[2] == "Subagent", vim.inspect(answer))
+  assert(#form.pending() == 0, "the form is still pending")
+end)
+
+test("an empty multiselect re-asks when required", function()
+  replies = {}
+  local required = vim.deepcopy(MULTI)
+  required.id = "frm_required"
+  required.fields[1].required = true
+  required.fields[1].custom = false
+  event.emit({ type = "form.created", data = { form = required } })
+  settle()
+  vim.api.nvim_feedkeys("\r", "x", false)
+  settle()
+  assert(#replies == 0, "an empty required answer must not be sent")
+  assert(#form.pending() == 1, "the form should still be waiting")
+  -- answer it for real so the next test starts clean
+  vim.api.nvim_feedkeys("1", "x", false)
+  settle()
+  vim.api.nvim_feedkeys("\r", "x", false)
+  settle()
+  assert(#replies == 1 and replies[1].answer.q1[1] == "Diff", vim.inspect(replies))
 end)
 
 test("a question left open is dropped when the turn ends", function()

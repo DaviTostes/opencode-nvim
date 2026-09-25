@@ -238,10 +238,121 @@ function M.review(opts)
   })
 end
 
+--- Body of a multiselect chooser: a checkbox per option plus any typed answers.
+---@return string[]
+local function multi_lines(opts, checked, extras)
+  local lines = vim.deepcopy(opts.body or {})
+  lines[#lines + 1] = ""
+  for index, option in ipairs(opts.options) do
+    lines[#lines + 1] = string.format("  [%s] %s%s",
+      checked[index] and "x" or " ", option.label,
+      option.description and ("  — " .. option.description) or "")
+  end
+  for _, extra in ipairs(extras) do
+    lines[#lines + 1] = string.format("  [x] %s", extra)
+  end
+  return lines
+end
+
+--- Checkbox chooser for `multiselect` questions: <Tab> and 1-9 toggle an option,
+--- `o` adds a typed answer, <CR> submits everything that is checked. Toggling
+--- keeps the popup open, so more than one option can be marked at a time.
+local function choose_multi(opts)
+  local options = opts.options or {}
+  local checked = {}
+  local extras = {}
+  local float
+
+  local function refresh()
+    if not (float and float.win and vim.api.nvim_win_is_valid(float.win)) then return end
+    local row = vim.api.nvim_win_get_cursor(float.win)[1]
+    vim.bo[float.buf].modifiable = true
+    vim.api.nvim_buf_set_lines(float.buf, 0, -1, false, multi_lines(opts, checked, extras))
+    vim.bo[float.buf].modifiable = false
+    local last = vim.api.nvim_buf_line_count(float.buf)
+    pcall(vim.api.nvim_win_set_cursor, float.win, { math.max(1, math.min(row, last)), 0 })
+  end
+
+  local function toggle(index)
+    if index < 1 or index > #options then return end
+    checked[index] = not checked[index]
+    refresh()
+  end
+
+  --- The row under the cursor: an option toggles, a typed answer is dropped.
+  local function toggle_cursor()
+    local index = vim.api.nvim_win_get_cursor(float.win)[1] - (#(opts.body or {}) + 2) + 1
+    if index >= 1 and index <= #options then return toggle(index) end
+    local extra = index - #options
+    if extra >= 1 and extra <= #extras then
+      table.remove(extras, extra)
+      refresh()
+    end
+  end
+
+  local function later()
+    local cb = opts.on_choice
+    close()
+    cb(nil)
+  end
+
+  local function submit()
+    local picked = {}
+    for index, option in ipairs(options) do
+      if checked[index] then picked[#picked + 1] = option end
+    end
+    for _, extra in ipairs(extras) do
+      picked[#picked + 1] = { label = extra, value = extra }
+    end
+    local cb = opts.on_choice
+    close()
+    cb(picked)
+  end
+
+  local keymaps = {}
+  for index = 1, math.min(#options, 9) do
+    keymaps[#keymaps + 1] = { tostring(index), function() toggle(index) end, "toggle " .. options[index].label }
+  end
+  keymaps[#keymaps + 1] = { "<Tab>", toggle_cursor, "toggle" }
+  keymaps[#keymaps + 1] = { "<CR>", submit, "done" }
+  if opts.allow_other then
+    keymaps[#keymaps + 1] = { "o", function()
+      vim.ui.input({ prompt = (opts.title or "answer") .. ": " }, function(text)
+        if text and text ~= "" then
+          extras[#extras + 1] = text
+          refresh()
+        end
+      end)
+    end, "type an answer" }
+  end
+  keymaps[#keymaps + 1] = { "<Esc>", later, "answer later" }
+  keymaps[#keymaps + 1] = { "q", later, "answer later" }
+
+  local hint = "<CR> done   <Tab>/1-9 toggle"
+  if opts.allow_other then hint = hint .. "   o type" end
+  hint = hint .. "   <Esc> later"
+
+  float = open_float({
+    title = opts.title or "question",
+    lines = multi_lines(opts, checked, extras),
+    height = math.min(0.7, 0.3 + 0.05 * (#options + 1)),
+    width = 0.7,
+    keymaps = keymaps,
+    footer = footer(hint),
+    kind = "form",
+  })
+  return float
+end
+
 --- Numbered chooser popup (used for questions): digits pick an option, <CR>
 --- picks the option on the cursor line, `o` types a custom answer.
----@param opts { title?: string, body?: string[], options: { label: string, description?: string }[], on_choice: fun(index: integer?), on_other?: fun() }
+---
+--- With `multi`, it becomes a checkbox list instead: <Tab> and 1-9 toggle an
+--- option, `o` adds a typed answer and <CR> submits.
+---@param opts { title?: string, body?: string[], options: { label: string, description?: string }[], multi?: boolean, allow_other?: boolean, on_choice: fun(index: integer?), on_other?: fun() }
 function M.choose(opts)
+  if opts.multi then return choose_multi(opts) end
+
   local lines = vim.deepcopy(opts.body or {})
   lines[#lines + 1] = ""
 
@@ -278,11 +389,16 @@ function M.choose(opts)
       other()
     end, "type an answer" }
   end
-  keymaps[#keymaps + 1] = { "<Esc>", function()
+  local function later()
     local cb = opts.on_choice
     close()
     cb(nil)
-  end, "answer later" }
+  end
+  keymaps[#keymaps + 1] = { "<Esc>", later, "answer later" }
+  -- `q` used to fall through to open_float's plain close, which hid the popup
+  -- while leaving the form active (so `:OpencodeQuestion` did nothing). Make it
+  -- mean the same as <Esc>: answer later, keep the form reachable.
+  keymaps[#keymaps + 1] = { "q", later, "answer later" }
 
   local hint = "<CR> choose   1-9 pick"
   if opts.on_other then hint = hint .. "   o type" end
