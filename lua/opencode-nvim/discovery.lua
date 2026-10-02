@@ -110,7 +110,7 @@ end
 
 --- Runs the CLI once; the CLI starts the background service when needed.
 local function autostart(cb)
-  local command = options().command or "opencode2"
+  local command = options().command or "opencode"
   if vim.fn.executable(command) ~= 1 then
     return cb(string.format("'%s' not found in PATH (adjust server.command)", command))
   end

@@ -5,7 +5,7 @@ while you keep editing.
 
 ## Requirements
 
-Neovim 0.11+ and OpenCode V2 (`opencode2`) in `PATH`.
+Neovim 0.11+ and OpenCode V2 (`opencode`) in `PATH`.
 
 ## Install
 

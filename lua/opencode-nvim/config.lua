@@ -16,7 +16,7 @@ local M = {}
 
 M.defaults = {
   server = {
-    command = "opencode2",
+    command = "opencode",
     autostart = true,
     hostname = "127.0.0.1",
     url = nil,

@@ -166,7 +166,13 @@ function R:text_finished(text)
     for index = start, #self.lines do
       current[#current + 1] = self.lines[index]
     end
-    if table.concat(current, "\n") ~= text then
+    -- `delta` writes the lines of a *fragment*: a `\n` at the end of one split
+    -- opens an empty line that the next piece joins, and that is what makes a
+    -- part ending in a blank line (a body followed by `\n\n`) look like it has a
+    -- cut off tail. Comparing the full text with `util.lines` (which keeps the
+    -- trailing empty line) rebuilds the exact line list, so the blank line under
+    -- the answer is written at the end of the part instead of after it.
+    if table.concat(current, "\n") .. "\n" ~= text then
       local replacement = util.lines(text)
       local lines, kinds = {}, {}
       for index = 1, start - 1 do
@@ -200,7 +206,7 @@ function R:repair_last_text(text)
   while start > 1 and self.kinds[start - 1] == "text" do start = start - 1 end
   local current = {}
   for index = start, last do current[#current + 1] = self.lines[index] end
-  if table.concat(current, "\n") == text then return false end
+  if table.concat(current, "\n") .. "\n" == text then return false end
   local lines, kinds = {}, {}
   for index = 1, start - 1 do
     lines[#lines + 1] = self.lines[index]

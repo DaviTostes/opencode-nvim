@@ -25,7 +25,7 @@ local config = require("opencode-nvim.config")
 -- Keep whatever the user's config set (that is the point when running with
 -- UI_SMOKE_USER_CONFIG=1); only make the run offline and keymap-free.
 local options = config.get()
-options.server = { command = "opencode2", autostart = false, url = "http://127.0.0.1:9" }
+options.server = { command = "opencode", autostart = false, url = "http://127.0.0.1:9" }
 options.keymaps.enabled = false
 plugin.setup(options)
 local event = require("opencode-nvim.event")

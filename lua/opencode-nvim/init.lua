@@ -541,7 +541,7 @@ function M.setup_approval_agent()
   if not ok then return fail("write " .. path, err) end
   session.reset_agents()
   log.notify(string.format(
-    "agent '%s' written to %s — run `opencode2 service restart` and open a new session", name, path))
+    "agent '%s' written to %s — run `opencode service restart` and open a new session", name, path))
 end
 
 --- Shows which agents pause for approval.

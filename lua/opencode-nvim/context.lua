@@ -142,6 +142,76 @@ local function fmt_diff(opts)
   return "```diff\n" .. table.concat(lines, "\n") .. "\n```"
 end
 
+--- Real placeholder names, so `@param` (a Lua annotation, an email, ...) is not
+--- mistaken for an explicit placeholder.
+local PLACEHOLDER_NAMES = {
+  this = true,
+  buffer = true,
+  buffers = true,
+  diagnostics = true,
+  diff = true,
+}
+
+--- `@` starts a placeholder only at the beginning of the text or after a
+--- non-word character: `user@example.com` is not a placeholder.
+local function at_boundary(text, at)
+  if at <= 1 then return true end
+  return text:sub(at - 1, at - 1):match("[%w_]") == nil
+end
+
+--- The first well-formed placeholder in `text`, if any.
+---@param text string
+---@return boolean
+function M.has_placeholder(text)
+  local at = 1
+  while true do
+    at = text:find("@", at, true)
+    if not at then return false end
+    local name = text:match("^@(%w+)", at)
+    if name and PLACEHOLDER_NAMES[name] and at_boundary(text, at) then return true end
+    at = at + 1
+  end
+end
+
+--- Replace the placeholders in `text`, appending attachments to `files`.
+local function expand_placeholders(text, opts, files)
+  local out = {}
+  local pos = 1
+  while true do
+    local at = text:find("@", pos, true)
+    if not at then
+      out[#out + 1] = text:sub(pos)
+      break
+    end
+
+    local name = text:match("^@(%w+)", at)
+    local replacement
+    if name and at_boundary(text, at) then
+      if name == "this" then
+        replacement = fmt_this(opts)
+      elseif name == "buffer" then
+        replacement = fmt_buffer(opts, files)
+      elseif name == "buffers" then
+        replacement = fmt_buffers(opts)
+      elseif name == "diagnostics" then
+        replacement = fmt_diagnostics(opts)
+      elseif name == "diff" then
+        replacement = fmt_diff(opts)
+      end
+    end
+
+    if replacement ~= nil then
+      out[#out + 1] = text:sub(pos, at - 1) .. replacement
+      pos = at + 1 + #name
+    else
+      -- not a placeholder: keep the `@` and keep scanning after it
+      out[#out + 1] = text:sub(pos, at)
+      pos = at + 1
+    end
+  end
+  return table.concat(out)
+end
+
 --- Compact one-line description of what the editor is looking at.
 ---
 --- This is what makes a plain sentence like "look at this file" work: the model
@@ -176,6 +246,10 @@ function M.header(opts)
 end
 
 --- Expand placeholders in `text`.
+---
+--- A placeholder only counts when its `@` starts a token (beginning of the text
+--- or after a non-word character), so an email like `user@this.com` is left
+--- untouched instead of being spliced with a code fence.
 ---@param text string
 ---@param opts? { bufnr?: integer, selection?: table, range?: table, directory?: string }
 ---@return string text
@@ -184,34 +258,23 @@ function M.expand(text, opts)
   opts = opts or {}
   local files = {}
 
+  local explicit = M.has_placeholder(text)
+  -- The user's text is expanded first: the editor context that gets prepended
+  -- below contains raw buffer lines, and those must never be treated as a
+  -- prompt (a `@param` annotation in a selection is not a placeholder).
+  local expanded = expand_placeholders(text, opts, files)
+
   -- With `context.auto` a plain sentence carries the editor context, so the
   -- model knows which file/selection "this" means. Explicit placeholders win.
-  local explicit = text:find("@%w+") ~= nil
   if cfg.get().context.auto and not explicit then
     local parts = {}
     local header = M.header(opts)
     if header then parts[#parts + 1] = header end
-    local first = range_of(opts)
-    if first then parts[#parts + 1] = fmt_this(opts) end
+    if range_of(opts) then parts[#parts + 1] = fmt_this(opts) end
     if #parts > 0 then
-      text = table.concat(parts, "\n") .. "\n\n" .. text
+      expanded = table.concat(parts, "\n") .. "\n\n" .. expanded
     end
   end
-
-  local expanded = text:gsub("@(%w+)", function(name)
-    if name == "this" then
-      return fmt_this(opts)
-    elseif name == "buffer" then
-      return fmt_buffer(opts, files)
-    elseif name == "buffers" then
-      return fmt_buffers(opts)
-    elseif name == "diagnostics" then
-      return fmt_diagnostics(opts)
-    elseif name == "diff" then
-      return fmt_diff(opts)
-    end
-    return "@" .. name
-  end)
 
   return expanded, files
 end

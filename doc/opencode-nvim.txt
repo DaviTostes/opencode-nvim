@@ -19,13 +19,13 @@ CONTENTS					*opencode-nvim-contents*
 ==============================================================================
 1. Introduction						*opencode-nvim-intro*
 
-opencode-nvim is a floating panel for talking to OpenCode V2 (`opencode2`)
+opencode-nvim is a floating panel for talking to OpenCode V2 (`opencode`)
 from inside Neovim. The conversation shows up in a float anchored to the bottom
 right corner that does *not* steal focus: you keep seeing and editing your code
 while the answer streams in.
 
 The plugin talks straight to the OpenCode HTTP service (the same background
-service the TUI uses), so sessions are shared with `opencode2` and the server is
+service the TUI uses), so sessions are shared with `opencode` and the server is
 already warm when you open Neovim.
 
 Features:
@@ -40,8 +40,8 @@ Features:
 2. Requirements					*opencode-nvim-requirements*
 
   - Neovim 0.11 or newer (uses `vim.uv`, `vim.json`, `vim.base64`, `vim.fs`).
-  - OpenCode V2 installed as `opencode2` in `PATH`.
-  - The OpenCode background service (`opencode2 serve` / the shared service).
+  - OpenCode V2 installed as `opencode` in `PATH`.
+  - The OpenCode background service (`opencode serve` / the shared service).
     The plugin starts one when there is none.
 
 ==============================================================================
@@ -68,7 +68,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
 >lua
   require("opencode-nvim").setup({
     server = {
-      command = "opencode2",   -- binary used to start the service
+      command = "opencode",   -- binary used to start the service
       autostart = true,        -- start the service when there is none
       url = nil,               -- force a server (e.g. "http://127.0.0.1:4094")
       password = nil,          -- force the password (default: service.json)
@@ -351,7 +351,7 @@ two levels:
        }
      }
 <
-   Then run `opencode2 service restart`. Check the state with
+   Then run `opencode service restart`. Check the state with
    `:OpencodeApproval`.
 
 2. Review after the turn (works with no config at all). When a turn that touched
@@ -443,7 +443,7 @@ Example: >
   - `:OpencodeApproval` shows whether an agent asks for approval.
   - `log = { level = "debug", file = "/tmp/opencode-nvim.log" }` records it all.
   - If edits do not reload, check `'autoread'` and `reload.enabled`.
-  - If the service is not found, check `server.command` and that `opencode2` is
+  - If the service is not found, check `server.command` and that `opencode` is
     in `PATH`.
   - If the diff/undo does not restore files, the directory is not a git
     repository (OpenCode snapshots use git).

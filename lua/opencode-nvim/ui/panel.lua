@@ -17,8 +17,17 @@ local THINKING_LINE = "▸ thinking…"
 local THINKING_HEADER = "▸ thinking"
 local GUTTER = "│ "
 
+--- Forces `inserting()` to a fixed answer, or nil to ask the real mode.
+---
+--- The headless tests run in `nvim -l`, which never enters insert mode, so the
+--- "you are typing while the answer streams" path — the one the user lives in —
+--- is otherwise untestable. Same idea as the tests poking `panel.state`.
+---@type boolean?
+M.force_inserting = nil
+
 --- True while any flavour of insert mode is active.
 local function inserting()
+  if M.force_inserting ~= nil then return M.force_inserting end
   return vim.fn.mode(1):find("^[iR]") ~= nil
 end
 
@@ -53,6 +62,17 @@ local function when_not_inserting(win, command)
   if not inserting() then
     return pcall(vim.fn.win_execute, win, command)
   end
+  -- One pending command per window, the newest one. A queued command carries
+  -- the line numbers it was built with, so a backlog is not just wasted work:
+  -- flushing it in order replays stale ones, and the last of them to run is the
+  -- *oldest* view. A whole turn streams while you are typing, so that backlog
+  -- is the normal case, not an edge one.
+  for index, item in ipairs(pending_window_commands) do
+    if item.win == win then
+      pending_window_commands[index] = { win = win, command = command }
+      return
+    end
+  end
   pending_window_commands[#pending_window_commands + 1] = { win = win, command = command }
 end
 
@@ -86,6 +106,9 @@ local state = {
   running_since = nil,
   warned_slow = false,
   ticker = nil,
+  -- While a history replay is writing the panel, a tool result that arrives for
+  -- an *older* message must not be replayed in front of the answer.
+  replaying = false,
   input = {
     buf = nil,
     win = nil,
@@ -158,9 +181,30 @@ local function fold_reasoning(renderer)
   -- lines right after the fold and drop it.
   renderer:draw()
   local follow = window_at_bottom()
-  -- `:fold` *closes*; creating one from a script is `zf` over a visual range.
-  -- Done without switching the focus, and deferred while you are typing.
-  when_not_inserting(win, string.format("normal! %dGV%dGzf | normal! zc", block.first, block.last))
+  -- `zf` over a visual range, straight away — *not* through
+  -- `when_not_inserting`. You are typing in the prompt for the whole turn, so
+  -- deferring to InsertLeave meant the reasoning stayed expanded until you left
+  -- the UI. It is safe to run now: `win_execute` does not switch the focus
+  -- (the reason `when_not_inserting` exists in the first place) and moving
+  -- another window's cursor is invisible while you type.
+  --
+  -- The `G`s do move the panel cursor, so put it back: if the user has scrolled
+  -- up, leaving it on the new fold would yank the view the moment they clicked
+  -- back into the panel.
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  -- Two calls, not one: `:normal` swallows everything after it, `|` included.
+  -- As a single command the `| normal! zc` was fed to Normal mode as keys
+  -- (`zf` then `n`, which threw E35 and aborted the rest).
+  pcall(vim.fn.win_execute, win, string.format("normal! %dGV%dGzf", block.first, block.last))
+  -- `foldlevel = 0` already closed what `zf` just made, so this normally does
+  -- nothing. It only fires when that fold is somehow still open, and never on
+  -- a fold the reader opened themselves with `zo`/`zR`.
+  if vim.api.nvim_win_call(win, function()
+    return vim.fn.foldlevel(block.first) > 0 and vim.fn.foldclosed(block.first) == -1
+  end) then
+    pcall(vim.fn.win_execute, win, "normal! zc")
+  end
+  pcall(vim.api.nvim_win_set_cursor, win, cursor)
   if follow then M.scroll_to_bottom() end
 end
 
@@ -719,6 +763,13 @@ function M.input_buf()
   vim.keymap.set("n", "<C-p>", function() M.input_history(-1) end, opts)
   vim.keymap.set("n", "<C-n>", function() M.input_history(1) end, opts)
   vim.bo[buf].omnifunc = "v:lua.opencode_nvim_omnifunc"
+  -- The menu opens by itself as soon as `@` is typed, so the first match must
+  -- never be written to the buffer. With the default 'completeopt' every
+  -- `complete()` inserts the selected match right away: typing `@` turned into
+  -- `@this` and backspace could not remove it (each keystroke re-opened the
+  -- menu and re-inserted the match). `noinsert` + `noselect` keep the prompt
+  -- exactly as typed until a match is picked on purpose.
+  vim.bo[buf].completeopt = "menu,menuone,noselect,noinsert"
 
   vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
     buffer = buf,
@@ -830,10 +881,14 @@ function M.maybe_complete()
 
   local line = vim.api.nvim_get_current_line()
   local col = vim.api.nvim_win_get_cursor(0)[2]
+  if col > #line then col = #line end
   local prefix = line:sub(1, col):match("@[%w]*$")
   if not prefix then return end
   local items = M.placeholder_items(prefix)
   if #items == 0 then return end
+  -- The placeholder is already written out in full (`@this`): no menu to show,
+  -- and reopening one would only flash in the way of the next keystroke.
+  if #items == 1 and items[1].word == prefix then return end
   vim.fn.complete(col - #prefix + 1, items)
 end
 
@@ -1241,6 +1296,7 @@ function M.clear()
   state.held_text = nil
   state.text_open = false
   state.turn_had_text = false
+  state.replaying = false
   state.pending_tools = {}
   state.pending_order = {}
   state.deferred_tools = {}
@@ -1290,6 +1346,10 @@ end
 function M.render_messages(messages)
   local renderer = M.renderer()
   local index = 0
+  -- A replay writes the panel while the live stream keeps delivering events:
+  -- mark it so a tool result that belongs to an older message is deferred to
+  -- the end of the turn instead of splitting the text being replayed.
+  state.replaying = true
   for _, message in ipairs(messages) do
     if message.type == "user" then
       local text = message_text(message)
@@ -1320,6 +1380,7 @@ function M.render_messages(messages)
       renderer:finalize()
     end
   end
+  state.replaying = false
   renderer:finalize()
   M.scroll_to_bottom()
 end
@@ -1401,6 +1462,7 @@ function M.on_session(info)
   state.held_text = nil
   state.text_open = false
   state.turn_had_text = false
+  state.replaying = false
   state.pending_tools = {}
   state.pending_order = {}
   state.deferred_tools = {}
@@ -1530,6 +1592,14 @@ function M.on_event(ev)
   end
   if not belongs_here(data) then return end
 
+  -- The turn is over. Clear the replay flag before the branches below: a turn
+  -- that ends while the history is still loading must not hold its results
+  -- forever (`replaying` would stay true with nothing left to release it).
+  if kind == "session.execution.succeeded" or kind == "session.execution.interrupted"
+    or kind == "session.execution.failed" then
+    state.replaying = false
+  end
+
   local renderer = M.renderer()
 
   if kind == "session.text.started" then
@@ -1603,13 +1673,25 @@ function M.on_event(ev)
     if state.text_open then
       state.deferred_tools[id] = { ok = true, body = tool_body(data), name = tool_name(data) }
       state.deferred_order[#state.deferred_order + 1] = id
+    elseif state.replaying then
+      -- A history replay is in progress. In the stored message the text comes
+      -- *before* the tools it follows, but the server emits the parts in a
+      -- different order: live, the tool result typically arrives while the part
+      -- is still open (held by `text_open` above); a dropped `text.ended` — the
+      -- normal case when you attach to a session that is already streaming, or a
+      -- missed event right at the end — leaves `text_open` false, and the result
+      -- used to render *on top of* the answer being replayed, which is how the
+      -- final answer ended up cut off behind the tool header. Hold it and let
+      -- the turn end place it after the text, the order the message is stored in.
+      state.deferred_tools[id] = { ok = true, body = tool_body(data), name = tool_name(data) }
+      state.deferred_order[#state.deferred_order + 1] = id
     else
       if state.pending_tools[id] then flush_tool(renderer, id) end
       renderer:tool_end(id, true, tool_body(data))
     end
   elseif kind == "session.tool.failed" then
     local id = tool_id(data) or "tool"
-    if state.text_open then
+    if state.text_open or state.replaying then
       state.deferred_tools[id] = { ok = false, body = tool_body(data), name = tool_name(data) }
       state.deferred_order[#state.deferred_order + 1] = id
     else
@@ -1619,6 +1701,9 @@ function M.on_event(ev)
   elseif kind == "session.execution.started" then
     state.turn_had_text = false
     state.reasoning_active = false
+    -- A history replay that is still in flight must stop holding tool results:
+    -- the turn running now is live, and its results belong where they arrive.
+    state.replaying = false
     -- A held text part from a previous turn would otherwise leak here.
     if state.held_text ~= nil then
       release_held_text(renderer)
@@ -1687,7 +1772,13 @@ function M.on_event(ev)
     renderer:error("context compaction failed")
   elseif kind == "session.idle" then
     M.set_status("idle")
+    -- The turn is over even if this panel never saw its end event (a session
+    -- attached to while it was already idle): stop holding tool results and
+    -- place whatever is left, in the stored order.
+    flush_reasoning(renderer)
+    flush_deferred(renderer)
     renderer:finalize()
+    reconcile_text(renderer)
     M.update_title()
   elseif kind == "session.usage.updated" or kind == "session.updated"
     or kind == "session.model.selected" or kind == "session.agent.selected" then

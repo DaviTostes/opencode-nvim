@@ -32,6 +32,9 @@ end
 
 local function test(name, fn)
   local ok, err = pcall(fn)
+  -- `force_inserting` is global to the module: a test that fails halfway would
+  -- otherwise leave the panel convinced it is being typed at.
+  panel.force_inserting = nil
   report(name, ok, err)
 end
 
@@ -137,6 +140,44 @@ test("a tool inside a text part does not duplicate the answer", function()
   assert(not text:find("hello world", first + 1, true), "the answer was duplicated:\n" .. text)
   local tool_at = text:find("shell", 1, true)
   assert(tool_at and tool_at > first, "the tool must come after the text:\n" .. text)
+end)
+
+test("a blank line under the answer belongs to the answer, not to the tool after it", function()
+  -- Regression: `delta` writes the lines of the *fragment*, so the `\n` at the
+  -- end of one delta opened an empty line that the next piece then joined.
+  -- `text_finished` compared with a concatenation that dropped that trailing
+  -- empty line, saw a "mismatch", rewrote the block, and the blank line the body
+  -- ends with surfaced *after* the answer — right in front of the tool header.
+  -- With tool output on, the final message looked like it had been cut behind a
+  -- `read`/`edit` line.
+  plugin.clear()
+  settle()
+  local body = "the answer\n\n"
+  feed("session.execution.started")
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "the answer\n" })
+  feed("session.text.delta", { delta = "\n" })
+  -- The server emits the next tool call while the part is still open.
+  feed("session.tool.input.started", { id = "after", name = "read" })
+  feed("session.tool.input.ended", { id = "after", text = '{"filePath":"/tmp/x"}' })
+  feed("session.text.ended", { text = body })
+  feed("session.tool.success", { id = "after", content = { { type = "text", text = "x" } } })
+  feed("session.execution.succeeded")
+  settle()
+
+  local lines = vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false)
+  -- Find the answer and the blank run right after it.
+  local answer, tool = 0, 0
+  for index, line in ipairs(lines) do
+    if line == "the answer" then answer = index end
+    if line:find("▸ read", 1, true) then tool = index end
+  end
+  assert(answer > 0 and tool > 0, table.concat(lines, "\n"))
+  assert(lines[answer + 1] == "" and lines[answer + 2] == "",
+    "the blank line under the answer went missing:\n" .. table.concat(lines, "\n"))
+  assert(tool == answer + 3,
+    "the blank line moved between the answer and the tool:\n"
+      .. table.concat(lines, "\n"))
 end)
 
 test("a truncated answer is repaired from the stored message at turn end", function()
@@ -527,6 +568,24 @@ test("context.auto tells the model what 'this' means", function()
   local plain = context.expand("look at this", { bufnr = buf, line = 2 })
   assert(not plain:find("[editor context]", 1, true), plain)
   cfg.get().context.auto = true
+
+  -- an `@` inside a word is not a placeholder: an email must survive untouched
+  cfg.get().context.auto = false
+  local email = context.expand("mail me@this.com", { bufnr = buf, line = 1 })
+  assert(email:find("me@this.com", 1, true), email)
+  assert(not email:find("```", 1, true), email)
+  local annotation = context.expand("see ---@param x here", { bufnr = buf, line = 1 })
+  assert(annotation:find("---@param x", 1, true), annotation)
+  local real = context.expand("see @this here", { bufnr = buf, line = 1 })
+  assert(real:find("local x = 1", 1, true), real)
+  cfg.get().context.auto = true
+
+  -- an email does not count as an explicit placeholder, so the automatic
+  -- context is still added for a prompt that is not really asking for one
+  local with_auto = context.expand("mail me@this.com", { bufnr = buf, line = 1 })
+  assert(with_auto:find("[editor context]", 1, true), with_auto)
+  assert(with_auto:find("me@this.com", 1, true), with_auto)
+
   vim.api.nvim_buf_delete(buf, { force = true })
 end)
 
@@ -601,12 +660,101 @@ test("reasoning gets a header, a gutter and a fold", function()
   -- would run on every redraw)
   assert(vim.wo[panel.state.win].foldmethod == "manual",
     "expected manual folds, got " .. vim.wo[panel.state.win].foldmethod)
-  if vim.wo[panel.state.win].foldenable then
-    local closed = vim.api.nvim_win_call(panel.state.win, function()
-      return vim.fn.foldclosed(first_gutter)
-    end)
-    assert(closed ~= -1, "the reasoning block is not folded closed")
+  assert(vim.wo[panel.state.win].foldenable, "folds are off in the panel window")
+  local closed = vim.api.nvim_win_call(panel.state.win, function()
+    return vim.fn.foldclosed(first_gutter)
+  end)
+  assert(closed ~= -1, "the reasoning block is not folded closed")
+  plugin.close()
+end)
+
+test("reasoning is folded while you are typing the next prompt", function()
+  -- Regression: the fold was queued for InsertLeave (`when_not_inserting`), and
+  -- you type for the whole turn, so the reasoning stayed expanded for exactly
+  -- as long as it mattered — until you left the UI.
+  --
+  -- `force_inserting` is cleared in `test` below whatever happens in here: a
+  -- failure here used to leak "inserting" into the next test and hide it.
+  plugin.open({ input = false })
+  plugin.clear()
+  settle()
+  panel.force_inserting = true
+  feed("session.execution.started")
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "t1\nt2\nt3\nt4" })
+  feed("session.reasoning.ended")
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "the answer" })
+  feed("session.text.ended", { text = "the answer" })
+  settle()
+
+  local lines = vim.api.nvim_buf_get_lines(panel.state.buf, 0, -1, false)
+  local first_gutter
+  for index, line in ipairs(lines) do
+    if line:sub(1, #"│ ") == "│ " and not first_gutter then first_gutter = index end
   end
+  assert(first_gutter, "no guttered line found:\n" .. table.concat(lines, "\n"))
+  local closed = vim.api.nvim_win_call(panel.state.win, function()
+    return vim.fn.foldclosed(first_gutter)
+  end)
+  assert(closed ~= -1,
+    "the reasoning was left expanded while the prompt had the keyboard:\n"
+      .. table.concat(lines, "\n"))
+
+  -- The answer still landed after it, unfolded: the fold must not swallow the
+  -- tail of the turn.
+  local answer_at = table.concat(lines, "\n"):find("the answer", 1, true)
+  assert(answer_at, "the answer is missing:\n" .. table.concat(lines, "\n"))
+  plugin.close()
+end)
+
+test("a fold does not eat the panel cursor or the next line", function()
+  -- Regression: the fold ran `:normal! {a}GV{b}Gzf | normal! zc` as one
+  -- command, and `:normal` treats the `|` as another key: the leftover
+  -- `| normal! zc` was executed in Normal mode (and threw E35 on `n`). The
+  -- cursor was also left on the fold instead of where the reader was looking.
+  plugin.open({ input = false })
+  plugin.clear()
+  settle()
+  -- A tall block so the panel view can sit away from the end (it is 7 rows
+  -- high headless): that is what turns `follow` off.
+  local long = {}
+  for index = 1, 40 do long[index] = "answer line " .. index end
+  feed("session.text.started")
+  feed("session.text.delta", { delta = table.concat(long, "\n") })
+  feed("session.text.ended", { text = table.concat(long, "\n") })
+  settle()
+
+  local win = panel.state.win
+  local buf = panel.state.buf
+  -- `zt` scrolls to the *cursor* line, so the cursor has to move first.
+  vim.api.nvim_win_set_cursor(win, { 1, 0 })
+  vim.api.nvim_win_call(win, function() vim.cmd("normal! zt") end)
+  local before = vim.api.nvim_win_get_cursor(win)
+  assert(before[1] == 1, "could not park the cursor: " .. vim.inspect(before))
+
+  feed("session.execution.started")
+  feed("session.reasoning.started")
+  feed("session.reasoning.delta", { delta = "s1\ns2\ns3\ns4" })
+  feed("session.reasoning.ended")
+  settle()
+
+  -- The reader had scrolled away, so following the end is off: the fold must
+  -- put the cursor back where it was, and must not drag the view down with it
+  -- (the `G`s in the command scroll the window to the cursor).
+  local after = vim.api.nvim_win_get_cursor(win)
+  assert(before[1] == after[1],
+    string.format("the fold moved the panel cursor: %d -> %d", before[1], after[1]))
+  local bottom = vim.api.nvim_win_call(win, function() return vim.fn.line("w$") end)
+  assert(bottom < vim.api.nvim_buf_line_count(buf),
+    string.format("the fold dragged the view to the end (w$=%d of %d lines)",
+      bottom, vim.api.nvim_buf_line_count(buf)))
+
+  -- And no stray keys reached the buffer: the `r` in the leftover `| normal!
+  -- zc` replaced a character of whatever line the cursor sat on.
+  assert(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == "answer line 1",
+    "the fold command wrote into the buffer: "
+      .. vim.inspect(vim.api.nvim_buf_get_lines(buf, 0, 2, false)))
   plugin.close()
 end)
 
@@ -796,6 +944,58 @@ test("a dropped reasoning end still puts the reasoning first", function()
   local answer_at = text:find("the answer", 1, true)
   assert(reasoning_at and answer_at and reasoning_at < answer_at,
     "the reasoning came after the answer:\n" .. text)
+end)
+
+test("a tool result for an older message does not cut the answer being replayed", function()
+  -- Regression for "ainda ta cortando as vezes a mensagem final": while the
+  -- history is being replayed, the live stream can still deliver a tool result
+  -- for a part that already ended (the `text.ended` carrying it was dropped,
+  -- which is the normal case when you attach to a streaming session). It used to
+  -- be rendered right away, on top of the answer being replayed — the text then
+  -- looked cut behind the result, and stayed cut until the turn ended.
+  local gate
+  local api = require("opencode-nvim.api")
+  local session = require("opencode-nvim.session")
+  local saved_messages, saved_id = api.messages, session.id
+  api.messages = function(_, _, cb) gate = cb end
+  session.id = function() return "ses_test" end
+
+  plugin.clear()
+  settle()
+  panel.load_history()
+
+  -- A history page is being replayed: a text part that ends without a newline,
+  -- so the tool must come after it, not before.
+  gate(nil, {
+    data = {
+      { type = "assistant", content = {
+        { type = "text", text = "the answer ends here" },
+        { type = "tool", name = "read", state = { status = "completed", input = { filePath = "/tmp/x" } } },
+      } },
+    },
+  })
+  panel.state.replaying = true
+
+  -- The live result arrives for the text part that was just replayed.
+  feed("session.tool.success", { id = "late", name = "read", content = { { type = "text", text = "x" } } })
+  settle()
+
+  local text = panel_text()
+  local answer_at = text:find("the answer ends here", 1, true)
+  local read_at = text:find("read", 1, true)
+  assert(answer_at and read_at, text)
+  assert(answer_at < read_at, "the tool result cut in front of the answer:\n" .. text)
+
+  -- The turn end places the deferred result after the text.
+  feed("session.execution.succeeded")
+  settle()
+  assert(not panel.state.replaying, "replaying was not cleared")
+  text = panel_text()
+  answer_at = text:find("the answer ends here", 1, true)
+  read_at = text:find("read", 1, true)
+  assert(answer_at < read_at, "the result did not land after the answer:\n" .. text)
+
+  api.messages, session.id = saved_messages, saved_id
 end)
 
 --- Is the last line of the panel buffer on screen? (`w$` is the last
@@ -1188,6 +1388,22 @@ test("completing @ shows the placeholders with a description", function()
   -- the plain string items must still work without an `@`
   local plain = panel.complete(0, "re")
   assert(type(plain) == "table", vim.inspect(plain))
+end)
+
+test("typing @ never writes a placeholder into the prompt on its own", function()
+  -- Regression: opening the menu must not insert the first match. With the
+  -- default 'completeopt', `complete()` inserted `@this` as soon as `@` was
+  -- typed, and backspace could not remove it because every keystroke re-opened
+  -- the menu and re-inserted the match.
+  local buf = panel.input_buf()
+  local opt = vim.bo[buf].completeopt
+  assert(opt:find("noinsert", 1, true), "completeopt is missing noinsert: " .. opt)
+  assert(opt:find("noselect", 1, true), "completeopt is missing noselect: " .. opt)
+  assert(opt:find("menuone", 1, true), "completeopt is missing menuone: " .. opt)
+
+  -- The menu still lists the placeholders: only the auto-insertion is gone.
+  local items = panel.placeholder_items("@")
+  assert(#items == 5, vim.inspect(items))
 end)
 
 test("pickers mark the current model and agent", function()

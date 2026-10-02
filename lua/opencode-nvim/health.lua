@@ -21,7 +21,7 @@ function M.check()
     vim.health.warn("the registered pid (" .. tostring(info.service_pid) .. ") is not alive; a new service will be started")
   end
 
-  if vim.fn.executable(info.command or "opencode2") == 1 then
+  if vim.fn.executable(info.command or "opencode") == 1 then
     vim.health.ok("command found: " .. tostring(info.command))
   else
     vim.health.error("'" .. tostring(info.command) .. "' is not in PATH (adjust server.command)")
