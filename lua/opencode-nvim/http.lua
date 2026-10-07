@@ -210,6 +210,18 @@ end
 
 function Parser:eof()
   if self.done then return end
+  -- A response without a status line (the connection closed before, or in the
+  -- middle of, the headers) is not a success: leaving `status == nil` used to
+  -- reach the API layer and raise on `nil < 200` inside a scheduled callback,
+  -- so the request never called back and the panel stayed "running".
+  if self.status == nil then
+    return self:_finish("connection closed before the response headers")
+  end
+  if self.state == "chunked" then
+    -- `_chunk` only finishes on the terminating 0-length chunk, so reaching
+    -- EOF still in the chunked state means the body was truncated.
+    return self:_finish("connection closed before the end of the chunked body")
+  end
   if self.state == "length" and self.remaining > 0 then
     return self:_finish("connection closed before the full body")
   end

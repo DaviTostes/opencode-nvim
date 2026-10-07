@@ -71,7 +71,18 @@ M.defaults = {
       -- tool prints its patch, so this hides diffs from the panel
       tool_output = true,
     },
-    input = { height = 4, border = "rounded" },
+    input = {
+      height = 4,
+      border = "rounded",
+      -- Like the TUI paste summary (`prompt.paste`): "compact" collapses a
+      -- large paste into a `[Pasted ~N lines]` marker that expands back when
+      -- the prompt is sent, "full" keeps the pasted text as is. A paste
+      -- collapses with `paste_lines` lines or more, or `paste_chars`
+      -- characters or more (the TUI uses 3 and 150).
+      paste = "compact",
+      paste_lines = 3,
+      paste_chars = 150,
+    },
     diff = { width = 0.85, height = 0.6, border = "rounded" },
     -- Opening the panel on purpose (a command or the toggle) focuses it, so its
     -- keys work right away. Automatic opens never move your cursor.

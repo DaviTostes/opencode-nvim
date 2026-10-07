@@ -101,7 +101,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
     reload = { enabled = true, set_autoread = true },
     ui = {
       panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22, border = "rounded", folds = true },
-      input = { height = 4, border = "rounded" },
+      input = { height = 4, border = "rounded", paste = "compact", paste_lines = 3, paste_chars = 150 },
       diff = { width = 0.85, height = 0.6, border = "rounded" },
       focus_on_open = true,          -- opening the panel focuses it
       focus_after_submit = "input",  -- "input": stay in the prompt (never closed, only
@@ -109,7 +109,6 @@ Without calling `setup()` the plugin configures itself with the defaults on
       panel = { tool_output = true }, -- false: keep the tool headers, drop their body
                                       -- (that is where an edit prints its patch)
       escape_closes = "panel",       -- <Esc>: "panel" | "all" | "input"
-      escape_closes = "all",       -- <Esc> in the prompt closes the panel too
     },
     keymaps = {                -- none are set unless enabled = true
       enabled = false,
@@ -273,6 +272,7 @@ the following (so you can read back); `G` returns to the end.
 Inside the prompt:
   <CR>		send (on an empty prompt it does nothing)
   <C-j>		newline
+  <BS>		right after a `[Pasted ~N lines]` marker, delete the whole marker
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
   @		typing `@` opens the placeholder menu with a description of
 		each one (@this, @buffer, @buffers, @diagnostics, @diff);

@@ -14,6 +14,7 @@ local util = require("opencode-nvim.util")
 local M = {}
 
 local queue = {}
+local deferred = {}
 local active = nil
 
 --------------------------------------------------------------------------------
@@ -80,6 +81,21 @@ local function finish(form, err)
   M.next()
 end
 
+--- Leaves the form for later: the user dismissed the popup (`<Esc>`/`q`).
+---
+--- This is what "answer later" means in the docs. It used to fall through to
+--- the per-field skip logic, so dismissing a single-question form replied with
+--- an empty answer and the server considered it answered.
+local function dismiss(form)
+  active = nil
+  for _, item in ipairs(deferred) do
+    if item.id == form.id then return M.next() end
+  end
+  deferred[#deferred + 1] = form
+  log.notify("question pending — :OpencodeQuestion to answer it later")
+  M.next()
+end
+
 local function send(form, answers)
   event.emit({ type = "opencode.form.replied", data = { answer = answers, id = form.id } })
   api.reply_form(session.id(), form.id, answers, function(err)
@@ -102,8 +118,9 @@ local function ask_field(form, fields, index, answers)
   end
 
   local function answered(value)
-    -- An empty multiselect selection is no answer at all: treat it like <Esc>
-    -- so a required field re-asks instead of sending an empty list.
+    -- An empty multiselect selection is no answer at all: treat it like an
+    -- empty field so a required field re-asks instead of sending an empty
+    -- list. (A *dismissed* popup calls `dismiss`, not `answered`.)
     if type(value) == "table" and #value == 0 then value = nil end
     if value ~= nil then answers[field.key] = value end
     if value == nil and field.required then
@@ -126,13 +143,17 @@ local function ask_field(form, fields, index, answers)
       multi = multi,
       allow_other = field.custom and true or false,
       on_choice = function(picked)
+        if picked == nil then return dismiss(form) end
         if multi then
-          return answered(M.answer_value(field, picked or {}))
+          return answered(M.answer_value(field, picked))
         end
-        answered(picked and M.answer_value(field, { options[picked] }) or nil)
+        return answered(M.answer_value(field, { options[picked] }))
       end,
       on_other = (not multi and field.custom) and function()
         vim.ui.input({ prompt = (field.title or field.key) .. ": " }, function(text)
+          -- Cancelling the typed answer goes back to the choices (where <Esc>
+          -- still means "answer later"); it must not skip the field.
+          if text == nil then return ask_field(form, fields, index, answers) end
           answered(text)
         end)
       end or nil,
@@ -143,7 +164,8 @@ local function ask_field(form, fields, index, answers)
       body = M.field_lines(field),
       options = { { label = "yes", value = true }, { label = "no", value = false } },
       on_choice = function(picked)
-        answered(picked and (picked == 1))
+        if picked == nil then return dismiss(form) end
+        answered(picked == 1)
       end,
     })
   elseif field.type == "external" then
@@ -151,14 +173,17 @@ local function ask_field(form, fields, index, answers)
       title = title,
       body = M.field_lines(field) .. { "", "Open: " .. tostring(field.url) },
       options = { { label = "done", value = true } },
-      on_choice = function() answered(nil) end,
+      on_choice = function(picked)
+        if picked == nil then return dismiss(form) end
+        answered(nil)
+      end,
     })
   end
 
   -- Free text / numbers: one input, with the default offered.
   local prompt = (field.title or field.key) .. ": "
   return vim.ui.input({ prompt = prompt, default = field.default and tostring(field.default) or nil }, function(text)
-    if text == nil then return answered(nil) end
+    if text == nil then return dismiss(form) end
     if field.type == "number" or field.type == "integer" then
       local number = tonumber(text)
       if not number then
@@ -204,6 +229,9 @@ function M.on_event(ev)
     for _, queued in ipairs(queue) do
       if queued.id == form.id then return end
     end
+    for _, waiting in ipairs(deferred) do
+      if waiting.id == form.id then return end
+    end
     queue[#queue + 1] = form
     M.next()
   elseif ev.type == "form.replied" or ev.type == "form.cancelled" then
@@ -217,11 +245,13 @@ function M.on_event(ev)
     -- The turn is over: a question still on screen is stale.
     active = nil
     queue = {}
+    deferred = {}
     ui.close_if("form")
   elseif ev.type == "opencode.session.changed" then
     -- another session is in play now
     active = nil
     queue = {}
+    deferred = {}
     ui.close_if("form")
   end
 end
@@ -232,7 +262,14 @@ function M.sync(cb)
   api.session_forms(session.id(), function(err, forms)
     if not err and type(forms) == "table" then
       for _, form in ipairs(forms) do
-        if form.id and not (active and active.id == form.id) then
+        local known = (active and active.id == form.id)
+        for _, queued in ipairs(queue) do
+          if queued.id == form.id then known = true end
+        end
+        for _, waiting in ipairs(deferred) do
+          if waiting.id == form.id then known = true end
+        end
+        if form.id and not known then
           queue[#queue + 1] = form
         end
       end
@@ -242,10 +279,20 @@ function M.sync(cb)
   end)
 end
 
+--- Bring back the questions the user left for later (`:OpencodeQuestion`).
+function M.resume()
+  if #deferred > 0 then
+    for _, form in ipairs(deferred) do queue[#queue + 1] = form end
+    deferred = {}
+  end
+  M.next()
+end
+
 function M.pending()
   local out = {}
   if active then out[#out + 1] = active end
   vim.list_extend(out, queue)
+  vim.list_extend(out, deferred)
   return out
 end
 

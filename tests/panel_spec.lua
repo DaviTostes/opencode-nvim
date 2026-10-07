@@ -32,9 +32,6 @@ end
 
 local function test(name, fn)
   local ok, err = pcall(fn)
-  -- `force_inserting` is global to the module: a test that fails halfway would
-  -- otherwise leave the panel convinced it is being typed at.
-  panel.force_inserting = nil
   report(name, ok, err)
 end
 
@@ -140,6 +137,8 @@ test("a tool inside a text part does not duplicate the answer", function()
   assert(not text:find("hello world", first + 1, true), "the answer was duplicated:\n" .. text)
   local tool_at = text:find("shell", 1, true)
   assert(tool_at and tool_at > first, "the tool must come after the text:\n" .. text)
+  -- ...and the arguments that arrived while the text part was open must survive
+  assert(text:find("echo hi", 1, true), "the tool summary was dropped:\n" .. text)
 end)
 
 test("a blank line under the answer belongs to the answer, not to the tool after it", function()
@@ -204,6 +203,55 @@ test("a truncated answer is repaired from the stored message at turn end", funct
   local text = panel_text()
   assert(text:find("the answer is truncated here", 1, true), text)
   assert(not text:find("the answer is trunc\n", 1, true), "the short fragment was left behind:\n" .. text)
+end)
+
+test("a repaired answer rewrites lines already drawn", function()
+  -- Regression: `text.ended` carries the authoritative text, but when it
+  -- differed from the streamed deltas *after* a draw had flushed the tail,
+  -- the repair rewrote the lines without rewinding `drawn`, so `draw()`
+  -- started past the changed lines and the buffer kept the stale text: the
+  -- final answer looked cut.
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "stale fragment\n" })
+  settle(300) -- let the debounced draw flush the tail first
+  feed("session.text.ended", { text = "authoritative full text" })
+  settle()
+  local text = panel_text()
+  assert(text:find("authoritative full text", 1, true), "the repair did not land:\n" .. text)
+  assert(not text:find("stale fragment", 1, true), "the stale tail survived the repair:\n" .. text)
+end)
+
+test("the turn-end repair rewrites lines already drawn", function()
+  -- Same watermark bug through `repair_last_text` (the `reconcile_text` run
+  -- when the turn ends): with the tail already drawn, the first repaired
+  -- line never reached the buffer.
+  local api = require("opencode-nvim.api")
+  local saved = api.messages
+  api.messages = function(_, _, cb)
+    cb(nil, {
+      data = {
+        { type = "assistant", content = { { type = "text", text = "first repaired line\nsecond repaired line\n" } } },
+      },
+    })
+  end
+  local ok, err = pcall(function()
+    plugin.clear()
+    settle()
+    feed("session.execution.started")
+    feed("session.text.started")
+    feed("session.text.delta", { delta = "trunc" })
+    settle(300) -- let the debounced draw flush the tail first
+    feed("session.execution.succeeded")
+    settle()
+    local text = panel_text()
+    assert(text:find("second repaired line", 1, true), "the repair did not land:\n" .. text)
+    assert(not text:find("trunc", 1, true), "the stale line survived the repair:\n" .. text)
+  end)
+  api.messages = saved
+  assert(ok, err)
 end)
 
 test("ignores events from other sessions", function()
@@ -531,6 +579,18 @@ test("resolve_model falls back to the TUI preferred model", function()
   local known = session.resolve_model({ providerID = "a", id = "b" },
     { { providerID = "a", id = "b", variant = "v" } })
   assert(known and known.id == "b" and known.variant == "v", vim.inspect(known))
+
+  -- A stale first candidate must not shadow a still-valid later one: an
+  -- unavailable explicit model used to return nil immediately instead of
+  -- falling back to the configured model / the TUI preference.
+  local cfg = require("opencode-nvim.config")
+  local saved_model = cfg.get().model
+  cfg.get().model = { providerID = "a", id = "b" }
+  local fallback = session.resolve_model({ providerID = "x", id = "y" },
+    { { providerID = "a", id = "b" } })
+  cfg.get().model = saved_model
+  assert(fallback and fallback.id == "b",
+    "the stale candidate shadowed the valid one: " .. vim.inspect(fallback))
 end)
 
 test("context.auto tells the model what 'this' means", function()
@@ -669,16 +729,12 @@ test("reasoning gets a header, a gutter and a fold", function()
 end)
 
 test("reasoning is folded while you are typing the next prompt", function()
-  -- Regression: the fold was queued for InsertLeave (`when_not_inserting`), and
-  -- you type for the whole turn, so the reasoning stayed expanded for exactly
-  -- as long as it mattered — until you left the UI.
-  --
-  -- `force_inserting` is cleared in `test` below whatever happens in here: a
-  -- failure here used to leak "inserting" into the next test and hide it.
+  -- Regression: the fold used to wait for InsertLeave, and you type for the
+  -- whole turn, so the reasoning stayed expanded for exactly as long as it
+  -- mattered — until you left the UI.
   plugin.open({ input = false })
   plugin.clear()
   settle()
-  panel.force_inserting = true
   feed("session.execution.started")
   feed("session.reasoning.started")
   feed("session.reasoning.delta", { delta = "t1\nt2\nt3\nt4" })
@@ -1022,6 +1078,35 @@ test("the panel follows the end while it streams", function()
   settle()
   assert(vim.api.nvim_buf_line_count(panel.state.buf) > 10, "not enough content")
   assert(at_bottom(), "the panel did not follow the end")
+  plugin.close()
+end)
+
+test("the panel follows the end while you are typing", function()
+  -- Regression: the view update (`winrestview`) used to be queued for
+  -- InsertLeave while inserting, so an answer that streamed while you were
+  -- typing sat below the frozen viewport looking cut — until you came back,
+  -- when the queue flushed and the panel "updated".
+  plugin.open({ input = false })
+  plugin.clear()
+  settle()
+  local views = 0
+  local original = vim.fn.win_execute
+  vim.fn.win_execute = function(win, cmd, ...)
+    if win == panel.state.win and type(cmd) == "string" and cmd:find("winrestview", 1, true) then
+      views = views + 1
+    end
+    return original(win, cmd, ...)
+  end
+  local ok, err = pcall(function()
+    for index = 1, 20 do
+      feed("session.text.delta", { delta = string.format("line %d\n", index) })
+    end
+    settle()
+  end)
+  vim.fn.win_execute = original
+  assert(ok, err)
+  assert(views > 0, "the view never followed while inserting (deferred to InsertLeave)")
+  assert(at_bottom(), "the panel did not follow the end while inserting")
   plugin.close()
 end)
 
@@ -1725,6 +1810,287 @@ test("focus_after_submit honours the configured mode", function()
 
   cfg.get().ui.focus_after_submit = "code"
   plugin.close()
+end)
+
+test("a pending permission is picked up when the session changes", function()
+  -- Regression: `permission.sync` (the sweep for requests that were already
+  -- pending when the plugin attached) existed but was never wired, unlike
+  -- `form.sync`. A `permission.asked` event missed while the stream was down
+  -- left the turn paused with no dialog and :OpencodePermissions empty.
+  local api = require("opencode-nvim.api")
+  local permission = require("opencode-nvim.permission")
+  local saved = api.permissions
+  api.permissions = function(_, cb)
+    cb(nil, { { id = "perm_sync_1", sessionID = "ses_test", action = "shell", resources = { "ls" } } })
+  end
+  local ok, err = pcall(function()
+    event.emit({
+      type = "opencode.session.changed",
+      data = { id = "ses_test", agent = "build", location = { directory = vim.uv.cwd() }, tokens = {}, cost = 0 },
+    })
+    settle()
+    local pending = permission.pending()
+    local found = false
+    for _, item in ipairs(pending) do
+      if item.id == "perm_sync_1" then found = true end
+    end
+    assert(found, "the pending permission was not picked up: " .. vim.inspect(pending))
+    -- clean up: the end of the turn drops it and closes the popup
+    event.emit({ type = "session.execution.succeeded", data = { sessionID = "ses_test" } })
+    settle()
+    assert(#permission.pending() == 0, "the permission was not cleaned up")
+  end)
+  api.permissions = saved
+  assert(ok, err)
+end)
+
+test(":OpencodeDoctor includes the focus and approval lines", function()
+  -- Regression: those two lines were appended *after* the job's callback. When
+  -- that callback was the one that reached the last pending check, it rendered
+  -- the float before the lines were appended, so they were missing.
+  plugin.doctor()
+  settle(300)
+  local text = table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false), "\n")
+  assert(text:find("focus:", 1, true), "the focus line is missing:\n" .. text)
+  assert(text:find("approval:", 1, true), "the approval line is missing:\n" .. text)
+  diff.close()
+end)
+
+test("text.ended restores a dropped trailing newline", function()
+  -- Regression: the repair compared the joined block with `text .. "\n"`, so a
+  -- streamed delta that lost the part's trailing newline was considered a match
+  -- and the blank line stayed missing.
+  local Renderer = require("opencode-nvim.ui.render")
+  local buf = vim.api.nvim_create_buf(false, true)
+  local renderer = Renderer.new(buf)
+  local ok, err = pcall(function()
+    renderer:delta("text", "hello")
+    renderer:text_finished("hello\n")
+    assert(#renderer.lines == 2 and renderer.lines[1] == "hello" and renderer.lines[2] == "",
+      "the trailing newline was dropped: " .. vim.inspect(renderer.lines))
+  end)
+  vim.api.nvim_buf_delete(buf, { force = true })
+  assert(ok, err)
+end)
+
+test("a permission reply goes to the session that asked", function()
+  -- Regression: `reply` used `session.id()` (whatever is current now), so
+  -- answering a dialog after attaching another session posted to the wrong
+  -- session and left the original turn paused.
+  local api = require("opencode-nvim.api")
+  local permission = require("opencode-nvim.permission")
+  local saved_reply, saved_perms = api.reply_permission, api.permissions
+  local got = nil
+  api.reply_permission = function(sid, id, decision)
+    got = { sid = sid, id = id, decision = decision }
+  end
+  api.permissions = function(_, cb)
+    cb(nil, { { id = "perm_sess", sessionID = "ses_other", action = "shell", resources = { "ls" } } })
+  end
+  local ok, err = pcall(function()
+    permission.sync()
+    settle()
+    vim.api.nvim_feedkeys("y", "x", false)
+    settle()
+    assert(got, "the permission was not answered")
+    assert(got.sid == "ses_other", "the reply went to the wrong session: " .. vim.inspect(got))
+  end)
+  api.reply_permission, api.permissions = saved_reply, saved_perms
+  event.emit({ type = "session.execution.succeeded", data = { sessionID = "ses_test" } })
+  settle()
+  assert(ok, err)
+  diff.close()
+end)
+
+test("attach reports a session with an empty body instead of crashing", function()
+  local api = require("opencode-nvim.api")
+  local session = require("opencode-nvim.session")
+  local saved = api.get_session
+  api.get_session = function(_, cb) cb(nil, nil) end
+  local ok, err = pcall(function()
+    local got_err, done = nil, false
+    session.attach("ses_nil", function(e)
+      got_err, done = e, true
+    end)
+    assert(done, "attach never called back")
+    assert(type(got_err) == "string", "expected an error, got " .. vim.inspect(got_err))
+  end)
+  api.get_session = saved
+  assert(ok, err)
+end)
+
+test("removing a line keeps tool headers addressed correctly", function()
+  -- Regression: `remove_line` shifted `self.lines` but left `self.tools[id].line`
+  -- stale, so a later `tool_update` wrote the header onto (or past) the wrong
+  -- line, duplicating it and corrupting the answer.
+  local Renderer = require("opencode-nvim.ui.render")
+  local buf = vim.api.nvim_create_buf(false, true)
+  local renderer = Renderer.new(buf)
+  local ok, err = pcall(function()
+    renderer:block("meta", "▸ thinking…")
+    renderer:tool_begin("call_x", "shell")
+    assert(renderer.tools["call_x"].line == 2, vim.inspect(renderer.tools))
+    renderer:remove_line("▸ thinking…")
+    assert(renderer.tools["call_x"].line == 1, "the tool index went stale: " .. vim.inspect(renderer.tools))
+    renderer:tool_update("call_x", { status = "✓", ok = true })
+    assert(#renderer.lines == 1, "the header was written to the wrong line: " .. vim.inspect(renderer.lines))
+    assert(renderer.lines[1]:find("✓", 1, true), vim.inspect(renderer.lines))
+  end)
+  vim.api.nvim_buf_delete(buf, { force = true })
+  assert(ok, err)
+end)
+
+test("highlight extmarks are not duplicated on rewrite", function()
+  -- Regression: `rewind` clamped `marked`, so `draw`'s clear was a no-op and a
+  -- `line_hl_group` mark accumulated on every tool status update.
+  local Renderer = require("opencode-nvim.ui.render")
+  local buf = vim.api.nvim_create_buf(false, true)
+  local renderer = Renderer.new(buf)
+  local ok, err = pcall(function()
+    renderer:tool_begin("t", "shell")
+    renderer:tool_update("t", { summary = "a" })
+    renderer:tool_update("t", { status = "✓", ok = true })
+    local marks = vim.api.nvim_buf_get_extmarks(buf, -1, 0, -1, {})
+    assert(#marks == 1, "highlight extmarks accumulated: " .. vim.inspect(marks))
+  end)
+  vim.api.nvim_buf_delete(buf, { force = true })
+  assert(ok, err)
+end)
+
+test("a read-only diff is not closed when the turn ends", function()
+  -- Regression: `ui.diff.patches` tagged every diff `kind = "permission"`, so a
+  -- `:OpencodeDiff`/`gd` view was force-closed when a turn finished.
+  diff.patches({
+    title = "working tree",
+    patches = { { file = "a.lua", patch = "+x", additions = 1, deletions = 0, status = "modified" } },
+  })
+  settle(80)
+  local win = vim.api.nvim_get_current_win()
+  assert(vim.api.nvim_win_get_config(win).relative ~= "", "the diff did not open")
+  event.emit({ type = "session.execution.succeeded", data = { sessionID = "ses_test" } })
+  settle()
+  assert(vim.api.nvim_win_is_valid(win), "the read-only diff was closed by the turn end")
+  diff.close()
+end)
+
+test("replayed reasoning keeps its header and gutter", function()
+  -- Regression: `render_messages` wrote reasoning as bare `dim` text, so a
+  -- replayed session lost the `▸ thinking` header and the `│ ` gutter and the
+  -- reasoning was indistinguishable from the answer.
+  plugin.clear()
+  settle()
+  panel.render_messages({
+    {
+      type = "assistant",
+      time = { created = 1 },
+      content = {
+        { type = "reasoning", text = "let me think" },
+        { type = "text", text = "the answer" },
+      },
+    },
+  })
+  settle()
+  local text = panel_text()
+  assert(text:find("▸ thinking", 1, true), "the reasoning header is missing:\n" .. text)
+  assert(text:find("│ let me think", 1, true), "the reasoning gutter is missing:\n" .. text)
+  assert(text:find("the answer", 1, true), text)
+end)
+
+test("a history replay replaces live content instead of appending", function()
+  -- Regression: attaching to a session that is already streaming could render
+  -- live deltas before the history pages arrived; `render_messages` then
+  -- appended the history after them, duplicating/mis-ordering the content.
+  plugin.clear()
+  settle()
+  local renderer = panel.renderer()
+  renderer:stream("text", "LIVE TOKEN")
+  renderer:finalize()
+  panel.render_messages({
+    { type = "assistant", time = { created = 1 }, content = { { type = "text", text = "stored answer" } } },
+  })
+  settle()
+  local text = panel_text()
+  assert(text:find("stored answer", 1, true), text)
+  assert(not text:find("LIVE TOKEN", 1, true), "live content survived the replay:\n" .. text)
+end)
+
+test("a tool still pending when a text part ends is rendered", function()
+  -- A tool announced before a text part (no `input.ended` yet) stays pending
+  -- while the part streams; the flush after the part must still render it.
+  plugin.clear()
+  settle()
+  feed("session.execution.started")
+  feed("session.tool.input.started", { id = "pre", name = "read" })
+  feed("session.text.started")
+  feed("session.text.delta", { delta = "answer" })
+  feed("session.tool.input.ended", { id = "pre", text = '{"filePath":"/tmp/pre.lua"}' })
+  feed("session.text.ended", { text = "answer" })
+  feed("session.tool.success", { id = "pre", content = { { type = "text", text = "ok" } } })
+  feed("session.execution.succeeded")
+  settle()
+  local text = panel_text()
+  assert(text:find("/tmp/pre.lua", 1, true), "the pending tool was dropped:\n" .. text)
+  assert(text:find("read", 1, true), text)
+end)
+
+test("api.request does not replay a POST after a timeout", function()
+  -- A timeout is ambiguous: the server may have applied the request, so a
+  -- non-idempotent POST must not be replayed (it would duplicate a prompt).
+  local api = require("opencode-nvim.api")
+  local http = require("opencode-nvim.http")
+  local discovery = require("opencode-nvim.discovery")
+  local saved_req, saved_res, saved_reset = http.request, discovery.resolve, discovery.reset
+  local calls, resets = 0, 0
+  discovery.resolve = function(cb) cb(nil, { host = "127.0.0.1", port = 1 }) end
+  discovery.reset = function() resets = resets + 1 end
+  http.request = function(_, _, cb)
+    calls = calls + 1
+    cb("timeout")
+    return { cancel = function() end }
+  end
+  local ok, err = pcall(function()
+    local done, got
+    api.raw({ method = "POST", path = "/api/session/x/prompt" }, function(e)
+      got, done = e, true
+    end)
+    assert(done, "no callback")
+    assert(calls == 1, "a non-idempotent POST was replayed after a timeout: " .. calls)
+    assert(got == "timeout", tostring(got))
+    assert(resets == 1, "discovery was not reset to recover from the error")
+  end)
+  http.request, discovery.resolve, discovery.reset = saved_req, saved_res, saved_reset
+  assert(ok, err)
+end)
+
+test("api.request replays an idempotent GET once", function()
+  local api = require("opencode-nvim.api")
+  local http = require("opencode-nvim.http")
+  local discovery = require("opencode-nvim.discovery")
+  local saved_req, saved_res, saved_reset = http.request, discovery.resolve, discovery.reset
+  local calls = 0
+  discovery.resolve = function(cb) cb(nil, { host = "127.0.0.1", port = 1 }) end
+  discovery.reset = function() end
+  http.request = function(_, _, cb)
+    calls = calls + 1
+    if calls == 1 then
+      cb("connect failed: refused")
+    else
+      cb(nil, 200, {}, '{"data":1}')
+    end
+    return { cancel = function() end }
+  end
+  local ok, err = pcall(function()
+    local done, got
+    api.raw({ method = "GET", path = "/api/info" }, function(e, data)
+      got, done = data, true
+      assert(e == nil, tostring(e))
+    end)
+    assert(done, "no callback")
+    assert(calls == 2, "the GET was not replayed: " .. calls)
+    assert(got and got.data == 1, vim.inspect(got))
+  end)
+  http.request, discovery.resolve, discovery.reset = saved_req, saved_res, saved_reset
+  assert(ok, err)
 end)
 
 io.write(string.format("\n%d failure(s)\n", failures))

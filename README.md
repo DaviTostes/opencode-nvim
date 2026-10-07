@@ -67,6 +67,11 @@ before `setup()`.
   `:OpencodeImage [path]` attaches a PNG/JPEG/GIF/WebP. A `[Image N]` marker goes
   into the prompt and the image rides along as a `data:` URL (the model needs
   image input).
+- **Pastes.** Like the TUI paste summary, a large paste (3+ lines or more than
+  150 characters) collapses into a `[Pasted ~N lines]` marker instead of flooding
+  the prompt; sending, history and resend still use the complete text.
+  `ui.input.paste = "full"` keeps the pasted text as is, and
+  `ui.input.paste_lines`/`paste_chars` tune the thresholds.
 - **Stuck turn.** The panel warns at 30s; `<C-c>` interrupts, `r` resends, and
   `:OpencodeDoctor` prints the server, stream, session, last events and error.
 - **Models.** Uses your last TUI model; pin it with
@@ -93,6 +98,7 @@ require("opencode-nvim").setup({
   context = { auto = true },              -- prepend the editor context
   ui = {
     panel = { width = 0.42, height = 0.32, max_width = 100, max_height = 22 },
+    input = { height = 4, paste = "compact", paste_lines = 3, paste_chars = 150 },
     focus_on_open = true,                 -- opening the panel focuses it
     focus_after_submit = "input",         -- "input" | "code" | "panel"
     escape_closes = "panel",              -- <Esc>: "panel" | "all" | "input"

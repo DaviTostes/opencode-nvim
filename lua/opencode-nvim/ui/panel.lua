@@ -17,65 +17,6 @@ local THINKING_LINE = "▸ thinking…"
 local THINKING_HEADER = "▸ thinking"
 local GUTTER = "│ "
 
---- Forces `inserting()` to a fixed answer, or nil to ask the real mode.
----
---- The headless tests run in `nvim -l`, which never enters insert mode, so the
---- "you are typing while the answer streams" path — the one the user lives in —
---- is otherwise untestable. Same idea as the tests poking `panel.state`.
----@type boolean?
-M.force_inserting = nil
-
---- True while any flavour of insert mode is active.
-local function inserting()
-  if M.force_inserting ~= nil then return M.force_inserting end
-  return vim.fn.mode(1):find("^[iR]") ~= nil
-end
-
---- Work that needs the panel window to be the current one.
----
---- Switching the current window from insert mode makes Neovim attribute the
---- insert mode to the buffer that became current ("the panel entered insert
---- mode") and the cursor goes with it. Measured with a real UI: `nvim_win_call`
---- emits that mode change, `vim.fn.win_execute()` does not switch the focus at
---- all. So: never `nvim_win_call` while inserting — queue it for InsertLeave.
-local pending_window_commands = {}
-
-local function flush_window_commands()
-  if inserting() then return end
-  local list = pending_window_commands
-  pending_window_commands = {}
-  for _, item in ipairs(list) do
-    if vim.api.nvim_win_is_valid(item.win) then
-      pcall(vim.fn.win_execute, item.win, item.command)
-    end
-  end
-end
-
-vim.api.nvim_create_autocmd("InsertLeave", {
-  callback = function() vim.schedule(flush_window_commands) end,
-})
-
----@param win integer
----@param command string Ex command to run in that window
-local function when_not_inserting(win, command)
-  if not (win and vim.api.nvim_win_is_valid(win)) then return end
-  if not inserting() then
-    return pcall(vim.fn.win_execute, win, command)
-  end
-  -- One pending command per window, the newest one. A queued command carries
-  -- the line numbers it was built with, so a backlog is not just wasted work:
-  -- flushing it in order replays stale ones, and the last of them to run is the
-  -- *oldest* view. A whole turn streams while you are typing, so that backlog
-  -- is the normal case, not an edge one.
-  for index, item in ipairs(pending_window_commands) do
-    if item.win == win then
-      pending_window_commands[index] = { win = win, command = command }
-      return
-    end
-  end
-  pending_window_commands[#pending_window_commands + 1] = { win = win, command = command }
-end
-
 local state = {
   buf = nil,
   win = nil,
@@ -102,6 +43,9 @@ local state = {
   -- Whether this turn streamed any text (the turn-end reconciliation only runs
   -- when there is a text block that could need repairing).
   turn_had_text = false,
+  -- Incremented on every new turn, so async repairs can tell whether the turn
+  -- they belong to is still the current one.
+  turn_serial = 0,
   stall_text = nil,
   running_since = nil,
   warned_slow = false,
@@ -119,6 +63,13 @@ local state = {
     draft = "",
     -- Images pasted/attached to the next prompt, cleared when it is sent.
     attachments = {},
+    -- Text pastes collapsed into `[Pasted ~N lines]` markers (like the TUI
+    -- paste summary): extmark id -> full pasted text. Cleared when sent.
+    paste_marks = {},
+    -- Previous prompt text, used to spot a paste (one large insertion).
+    prev_text = nil,
+    -- True while the collapse itself is rewriting the prompt.
+    collapsing = false,
   },
 }
 
@@ -144,10 +95,13 @@ function M.scroll_to_bottom()
   -- Moving another window's cursor is invisible to the mode and works without
   -- focus, so this runs always: the panel keeps following while you type.
   pcall(vim.api.nvim_win_set_cursor, win, { last, 0 })
-  -- Making the window show that line needs it to be current, which must not
-  -- happen during insert mode (see `when_not_inserting`). `winrestview` is an
-  -- Ex call, so unlike `normal!` it does not put that window in normal mode.
-  when_not_inserting(win, string.format("call winrestview({'lnum': %d})", last))
+  -- Live, even mid-typing: `win_execute` borrows the window for one Ex command
+  -- without switching the focus (unlike `nvim_win_call`, which re-attributes
+  -- insert mode to the window it jumps to), so it is safe while inserting.
+  -- Queueing this for InsertLeave froze the panel for the whole turn whenever
+  -- the answer streamed while you were typing: the final lines sat below the
+  -- viewport looking cut until you came back.
+  pcall(vim.fn.win_execute, win, string.format("call winrestview({'lnum': %d})", last))
 end
 
 --- True when the last line of the buffer is on screen, i.e. the user is
@@ -181,12 +135,11 @@ local function fold_reasoning(renderer)
   -- lines right after the fold and drop it.
   renderer:draw()
   local follow = window_at_bottom()
-  -- `zf` over a visual range, straight away — *not* through
-  -- `when_not_inserting`. You are typing in the prompt for the whole turn, so
-  -- deferring to InsertLeave meant the reasoning stayed expanded until you left
-  -- the UI. It is safe to run now: `win_execute` does not switch the focus
-  -- (the reason `when_not_inserting` exists in the first place) and moving
-  -- another window's cursor is invisible while you type.
+  -- `zf` over a visual range, straight away. You are typing in the prompt for
+  -- the whole turn, so deferring to InsertLeave meant the reasoning stayed
+  -- expanded until you left the UI. It is safe to run now: `win_execute` does
+  -- not switch the focus and moving another window's cursor is invisible
+  -- while you type.
   --
   -- The `G`s do move the panel cursor, so put it back: if the user has scrolled
   -- up, leaving it on the new fold would yank the view the moment they clicked
@@ -199,9 +152,16 @@ local function fold_reasoning(renderer)
   -- `foldlevel = 0` already closed what `zf` just made, so this normally does
   -- nothing. It only fires when that fold is somehow still open, and never on
   -- a fold the reader opened themselves with `zo`/`zR`.
-  if vim.api.nvim_win_call(win, function()
-    return vim.fn.foldlevel(block.first) > 0 and vim.fn.foldclosed(block.first) == -1
-  end) then
+  --
+  -- Read the fold state through `win_execute` rather than `nvim_win_call`:
+  -- switching the current window while you are typing makes Neovim re-attribute
+  -- insert mode to the window that became current (the exact leak the removed
+  -- `when_not_inserting` existed for). `foldlevelwin`/`foldclosedwin` are not
+  -- available on every supported Neovim, so the values come back via `echo`.
+  local ok, out = pcall(vim.fn.win_execute, win,
+    string.format("echo foldlevel(%d) .. ':' .. foldclosed(%d)", block.first, block.first))
+  local level, closed = ok and type(out) == "string" and out:match("(%d+):(-?%d+)") or nil
+  if level and tonumber(level) > 0 and tonumber(closed) == -1 then
     pcall(vim.fn.win_execute, win, "normal! zc")
   end
   pcall(vim.api.nvim_win_set_cursor, win, cursor)
@@ -281,18 +241,12 @@ function M.title()
   return table.concat(parts, " · ")
 end
 
---- Takes back the "thinking" placeholder when real content shows up. When the
---- content *is* reasoning the placeholder becomes the block header instead, so
---- reasoning is always delimited from the answer.
-local function clear_thinking(renderer, as_header)
+--- Takes back the "thinking" placeholder when real content shows up. Reasoning
+--- gets its own header through `ensure_reasoning_header` instead.
+local function clear_thinking(renderer)
   if not state.thinking then return end
   state.thinking = false
-  if as_header then
-    if renderer:replace_line(THINKING_LINE, THINKING_HEADER) then return end
-    renderer:remove_line(THINKING_LINE)
-  else
-    renderer:remove_line(THINKING_LINE)
-  end
+  renderer:remove_line(THINKING_LINE)
 end
 
 --- Reasoning arrives interleaved with tool calls (the server emits
@@ -353,7 +307,22 @@ local function flush_tool(renderer, id, name, args)
   -- block, and the `text.ended` repair would then see only the last fragment
   -- and append the whole text after it (the duplicated answer). Wait for the
   -- part to end instead.
-  if state.text_open then return end
+  --
+  -- The complete arguments usually arrive here (`input.ended`/`called`), so they
+  -- have to be stashed too: dropping them lost the one-line summary, because the
+  -- later flush only knew the `input.delta` fragments (usually none).
+  if state.text_open then
+    local pending = state.pending_tools[id]
+    if not pending then
+      pending = { name = name, args = args or "" }
+      state.pending_tools[id] = pending
+      state.pending_order[#state.pending_order + 1] = id
+    else
+      if name then pending.name = name end
+      if args ~= nil then pending.args = args end
+    end
+    return
+  end
   -- keep the order: reasoning written before the tool it surrounds
   flush_reasoning(renderer)
   local pending = state.pending_tools[id]
@@ -375,7 +344,15 @@ local function flush_all_tools(renderer)
   local order = state.pending_order or {}
   state.pending_order = {}
   for _, id in ipairs(order) do
-    if state.pending_tools[id] then flush_tool(renderer, id) end
+    if state.pending_tools[id] then
+      flush_tool(renderer, id)
+      -- `flush_tool` keeps the tool pending when a text part is open (it only
+      -- stashes the arguments): keep it in the order so the flush after the part
+      -- still happens.
+      if state.pending_tools[id] then
+        state.pending_order[#state.pending_order + 1] = id
+      end
+    end
   end
 end
 
@@ -414,8 +391,12 @@ local function reconcile_text(renderer)
   state.turn_had_text = false
   local id = session.id()
   if not id then return end
+  local serial = state.turn_serial
   api.messages(id, { limit = 3, order = "desc" }, function(err, page)
     if err then return end
+    -- The request is async: a new turn (or another session) may have started
+    -- while it was in flight. Repairing now would overwrite the newer answer.
+    if session.id() ~= id or state.turn_serial ~= serial then return end
     for _, message in ipairs((type(page) == "table" and page.data) or {}) do
       if message.type == "assistant" then
         local last
@@ -664,8 +645,8 @@ function M.close()
   state.title_signature = nil
 end
 
---- Show or hide the panel. Showing it never moves the cursor and never opens
---- the prompt: type with `:OpencodeAsk` or the in-panel key.
+--- Show or hide the panel. Showing it focuses it (`ui.focus_on_open`) but never
+--- opens the prompt: type with `:OpencodeAsk` or the in-panel key.
 function M.toggle()
   if M.visible() then return M.close() end
   M.open({ input = false })
@@ -736,6 +717,351 @@ end
 -- Prompt input
 --------------------------------------------------------------------------------
 
+--------------------------------------------------------------------------------
+-- Pasted text (the TUI paste summary)
+--------------------------------------------------------------------------------
+
+--- Namespace of the `[Pasted ~N lines]` markers in the prompt buffer.
+local paste_ns = vim.api.nvim_create_namespace("opencode-nvim-paste")
+
+--- Limits of the paste summary, mirroring the TUI (`prompt.paste`):
+--- "compact" collapses a large paste into a `[Pasted ~N lines]` marker that
+--- expands back when the prompt is sent, "full" keeps the pasted text as is.
+---@return string mode "compact"|"full", integer min_lines, integer min_chars
+local function paste_limits()
+  local ui = cfg.get().ui.input or {}
+  local mode = ui.paste == "full" and "full" or "compact"
+  return mode, ui.paste_lines or 3, ui.paste_chars or 150
+end
+
+--- Marker shown instead of the pasted text. The format is the TUI one.
+---@param count integer pasted line count
+---@return string
+function M.paste_placeholder(count)
+  return string.format("[Pasted ~%d lines]", count)
+end
+
+--- Normalizes a paste candidate the way the TUI does: CRLF/CR become LF and
+--- the outer whitespace is trimmed (it is not part of the pasted text).
+---@param text string
+---@return string trimmed, integer lines
+function M.normalize_paste(text)
+  local normalized = text:gsub("\r\n", "\n"):gsub("\r", "\n")
+  local trimmed = normalized:match("^%s*(.-)%s*$") or ""
+  if trimmed == "" then return "", 1 end
+  local _, newlines = trimmed:gsub("\n", "")
+  return trimmed, newlines + 1
+end
+
+---@param trimmed string
+---@param lines integer
+---@return boolean
+function M.should_collapse(trimmed, lines)
+  local mode, min_lines, min_chars = paste_limits()
+  if mode ~= "compact" then return false end
+  return lines >= min_lines or #trimmed > min_chars
+end
+
+---@param byte integer?
+---@return boolean
+local function is_continuation(byte)
+  return byte ~= nil and byte >= 0x80 and byte < 0xc0
+end
+
+--- Longest common prefix of two strings, snapped to a UTF-8 boundary.
+---@return integer length in bytes
+local function common_prefix(a, b)
+  local len = 0
+  local max = math.min(#a, #b)
+  while len < max and a:byte(len + 1) == b:byte(len + 1) do
+    len = len + 1
+  end
+  while len > 0 and is_continuation(a:byte(len + 1)) do
+    len = len - 1
+  end
+  return len
+end
+
+--- Longest common suffix of two strings, snapped to a UTF-8 boundary.
+---@return integer length in bytes
+local function common_suffix(a, b, max)
+  max = math.min(max or math.huge, #a, #b)
+  local len = 0
+  while len < max and a:byte(#a - len) == b:byte(#b - len) do
+    len = len + 1
+  end
+  while len > 0 and is_continuation(a:byte(#a - len + 1)) do
+    len = len - 1
+  end
+  return len
+end
+
+--- Buffer position of a byte offset in `text`.
+---@param text string
+---@param offset integer bytes before the point (0-based)
+---@return integer row0, integer col byte-based, 0-based
+local function offset_to_pos(text, offset)
+  local row, last_nl = 0, 0
+  for index = 1, offset do
+    if text:byte(index) == 10 then
+      row = row + 1
+      last_nl = index
+    end
+  end
+  return row, offset - last_nl
+end
+
+--- Forgets paste markers whose placeholder was deleted or edited into
+--- something else (an edited marker becomes plain text).
+function M.prune_paste_marks()
+  local input = state.input
+  local marks = input.paste_marks
+  if marks == nil or next(marks) == nil then return end
+  local buf = input.buf
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then
+    input.paste_marks = {}
+    return
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  for id in pairs(marks) do
+    local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, buf, paste_ns, id, { details = true })
+    local intact = false
+    if ok and type(pos) == "table" and pos[1] ~= nil and type(pos[3]) == "table" then
+      local row, col, details = pos[1], pos[2], pos[3]
+      if details.end_row == row and lines[row + 1] ~= nil then
+        local covered = lines[row + 1]:sub(col + 1, details.end_col or col)
+        intact = covered:match("^%[Pasted ~%d+ lines%]$") ~= nil
+      end
+    end
+    if not intact then marks[id] = nil end
+  end
+end
+
+--- Puts every intact `[Pasted ~N lines]` marker back to the pasted text.
+--- Markers without a paste (typed by hand) are left alone.
+---@param buf integer
+---@param text string prompt buffer text
+---@return string
+function M.expand_pastes(buf, text)
+  local marks = state.input.paste_marks
+  if marks == nil or next(marks) == nil then return text end
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then return text end
+  local lines = vim.split(text, "\n", { plain = true })
+  local starts = {}
+  local offset = 0
+  for index, line in ipairs(lines) do
+    starts[index] = offset
+    offset = offset + #line + 1
+  end
+  local replacements = {}
+  for id, full in pairs(marks) do
+    local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, buf, paste_ns, id, { details = true })
+    local done = false
+    if ok and type(pos) == "table" and pos[1] ~= nil and type(pos[3]) == "table" then
+      local row, col, details = pos[1], pos[2], pos[3]
+      if details.end_row == row and lines[row + 1] ~= nil then
+        local from = starts[row + 1] + col
+        local to = starts[row + 1] + (details.end_col or col)
+        if text:sub(from + 1, to):match("^%[Pasted ~%d+ lines%]$") then
+          replacements[#replacements + 1] = { from = from, to = to, full = full }
+          done = true
+        end
+      end
+    end
+    if not done then marks[id] = nil end
+  end
+  table.sort(replacements, function(a, b) return a.from > b.from end)
+  for _, item in ipairs(replacements) do
+    text = text:sub(1, item.from) .. item.full .. text:sub(item.to + 1)
+  end
+  return text
+end
+
+--- The raw prompt text: `[Pasted ~N lines]` markers are left in place.
+---@return string
+function M.input_raw()
+  local buf = state.input.buf
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then return "" end
+  return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+end
+
+--- The intact paste markers and the text they stand for, in buffer order.
+---
+--- Sending expands placeholders before substituting these (see `M.send`), so a
+--- pasted `@this` is sent verbatim instead of being expanded with editor
+--- context.
+---@return { marker: string, full: string }[]
+function M.paste_entries()
+  local entries = {}
+  local buf = state.input.buf
+  local marks = state.input.paste_marks
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) or marks == nil then return entries end
+  local text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+  local lines = vim.split(text, "\n", { plain = true })
+  local starts, offset = {}, 0
+  for index, line in ipairs(lines) do
+    starts[index] = offset
+    offset = offset + #line + 1
+  end
+  for id, full in pairs(marks) do
+    local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, buf, paste_ns, id, { details = true })
+    local intact = false
+    if ok and type(pos) == "table" and pos[1] ~= nil and type(pos[3]) == "table" then
+      local row, col, details = pos[1], pos[2], pos[3]
+      if details.end_row == row and lines[row + 1] ~= nil then
+        local from = starts[row + 1] + col
+        local to = starts[row + 1] + (details.end_col or col)
+        local marker = text:sub(from + 1, to)
+        if marker:match("^%[Pasted ~%d+ lines%]$") then
+          entries[#entries + 1] = { marker = marker, full = full, from = from }
+          intact = true
+        end
+      end
+    end
+    if not intact then marks[id] = nil end
+  end
+  table.sort(entries, function(a, b) return a.from < b.from end)
+  return entries
+end
+
+--- Replaces each `[Pasted ~N lines]` marker in `text` with its pasted text.
+---
+--- The markers are matched in order and only the first remaining occurrence is
+--- replaced, so several pastes with the same count stay in place. Markers with
+--- no paste entry (typed by hand) are left alone.
+---@param text string
+---@param entries { marker: string, full: string }[]
+---@return string
+function M.substitute_pastes(text, entries)
+  for _, entry in ipairs(entries or {}) do
+    local from = text:find(entry.marker, 1, true)
+    if from then
+      text = text:sub(1, from - 1) .. entry.full .. text:sub(from + #entry.marker)
+    end
+  end
+  return text
+end
+
+--- Forgets every collapsed paste: a fresh prompt starts with no markers.
+function M.clear_pastes()
+  local input = state.input
+  input.paste_marks = {}
+  input.prev_text = nil
+  local buf = input.buf
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    pcall(vim.api.nvim_buf_clear_namespace, buf, paste_ns, 0, -1)
+  end
+end
+
+--- Takes the current prompt text as the paste detector's baseline.
+---
+--- API buffer changes do not fire `TextChangedI`, so a programmatic edit (a
+--- history recall, an image marker, a split line) would otherwise be invisible
+--- to `maybe_collapse_paste`; the *next* keystroke then diffs against the text
+--- from before that edit and read the whole edit as a paste. Verified: recalling
+--- a 4-line history entry and typing one character collapsed it into a marker.
+local function reset_paste_baseline()
+  local buf = state.input.buf
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    state.input.prev_text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+  else
+    state.input.prev_text = nil
+  end
+end
+
+--- Collapses a freshly pasted block into a `[Pasted ~N lines]` marker.
+---
+--- Runs on every prompt change: typing alters one character at a time (below
+--- the thresholds), while a paste lands as a single large insertion, which is
+--- found by diffing against the previous text. The full text is kept in
+--- `state.input.paste_marks` and put back by `M.input_text` when the prompt
+--- is read, so sending, history and resend all see the complete prompt.
+function M.maybe_collapse_paste()
+  local input = state.input
+  local buf = input.buf
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then return end
+  if input.collapsing then return end
+  local current = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+  local prev = input.prev_text
+  if prev == nil then
+    input.prev_text = current
+    return
+  end
+  if prev == current then return end
+  M.prune_paste_marks()
+  local pre = common_prefix(prev, current)
+  local suf = common_suffix(prev, current, math.min(#prev, #current) - pre)
+  local inserted = current:sub(pre + 1, #current - suf)
+  if inserted == "" then
+    input.prev_text = current
+    return
+  end
+  local trimmed, lines = M.normalize_paste(inserted)
+  if trimmed == "" or not M.should_collapse(trimmed, lines) then
+    input.prev_text = current
+    return
+  end
+  input.collapsing = true
+  local marker = M.paste_placeholder(lines)
+  -- The whitespace around the paste stays outside the marker, so the marker
+  -- sits on its own lines and expanding it restores the exact pasted text.
+  local normalized = inserted:gsub("\r\n", "\n"):gsub("\r", "\n")
+  local leading = normalized:match("^(%s*)") or ""
+  local trailing = normalized:match("(%s*)$") or ""
+  local start_row, start_col = offset_to_pos(current, pre)
+  local end_row, end_col = offset_to_pos(current, #current - suf)
+  local replacement = vim.split(leading .. marker .. trailing, "\n", { plain = true })
+  if pcall(vim.api.nvim_buf_set_text, buf, start_row, start_col, end_row, end_col, replacement) then
+    -- The marker sits after the preserved whitespace in the new text.
+    local mark_row, mark_col = offset_to_pos(current:sub(1, pre) .. leading, pre + #leading)
+    local mark = { end_row = mark_row, end_col = mark_col + #marker, invalidate = true }
+    if vim.fn.hlexists("OpencodePaste") == 1 then mark.hl_group = "OpencodePaste" end
+    local ok, id = pcall(vim.api.nvim_buf_set_extmark, buf, paste_ns, mark_row, mark_col, mark)
+    if ok and id then
+      input.paste_marks = input.paste_marks or {}
+      input.paste_marks[id] = trimmed
+    end
+    if input.win and vim.api.nvim_win_is_valid(input.win) then
+      pcall(vim.api.nvim_win_set_cursor, input.win, { mark_row + 1, mark_col + #marker })
+    end
+    current = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+  end
+  input.prev_text = current
+  input.collapsing = false
+  M.update_input_win()
+end
+
+--- Deletes the whole paste marker when <BS> lands right after one, like the
+--- TUI (a marker is one unit: character-wise deletion would orphan the text).
+---@return boolean handled
+function M.paste_backspace()
+  local input = state.input
+  local buf, win, marks = input.buf, input.win, input.paste_marks
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then return false end
+  if not (win and vim.api.nvim_win_is_valid(win)) then return false end
+  if marks == nil or next(marks) == nil then return false end
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local row0, col = cursor[1] - 1, cursor[2]
+  if col <= 0 then return false end
+  local line = vim.api.nvim_buf_get_lines(buf, row0, row0 + 1, false)[1] or ""
+  for id in pairs(marks) do
+    local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, buf, paste_ns, id, { details = true })
+    if ok and type(pos) == "table" and pos[1] == row0 and type(pos[3]) == "table" and pos[3].end_row == row0 then
+      if pos[3].end_col == col and line:sub(1, col):match("%[Pasted ~%d+ lines%]$") then
+        input.collapsing = true
+        pcall(vim.api.nvim_buf_set_text, buf, row0, pos[2], row0, col, { "" })
+        pcall(vim.api.nvim_buf_del_extmark, buf, paste_ns, id)
+        marks[id] = nil
+        input.prev_text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+        input.collapsing = false
+        M.update_input_win()
+        return true
+      end
+    end
+  end
+  return false
+end
+
 function M.input_buf()
   if state.input.buf and vim.api.nvim_buf_is_valid(state.input.buf) then return state.input.buf end
   local buf = vim.api.nvim_create_buf(false, true)
@@ -762,6 +1088,11 @@ function M.input_buf()
   vim.keymap.set({ "i", "n" }, "<C-Down>", function() M.input_history(1) end, opts)
   vim.keymap.set("n", "<C-p>", function() M.input_history(-1) end, opts)
   vim.keymap.set("n", "<C-n>", function() M.input_history(1) end, opts)
+  -- Like the TUI, <BS> right after a pasted marker deletes the whole marker.
+  vim.keymap.set("i", "<BS>", function()
+    if M.paste_backspace() then return end
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<BS>", true, false, true), "n", false)
+  end, opts)
   vim.bo[buf].omnifunc = "v:lua.opencode_nvim_omnifunc"
   -- The menu opens by itself as soon as `@` is typed, so the first match must
   -- never be written to the buffer. With the default 'completeopt' every
@@ -771,6 +1102,15 @@ function M.input_buf()
   -- exactly as typed until a match is picked on purpose.
   vim.bo[buf].completeopt = "menu,menuone,noselect,noinsert"
 
+  -- Only an insert-mode change can be a paste. A normal-mode change is an undo,
+  -- a `p`, or another bulk operation: collapsing those made `u` after a paste
+  -- re-collapse what it had just undone (the collapse is by then the top of the
+  -- undo stack, so undo turned the marker into the text and the next diff
+  -- turned it straight back).
+  vim.api.nvim_create_autocmd("TextChangedI", {
+    buffer = buf,
+    callback = function() M.maybe_collapse_paste() end,
+  })
   vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
     buffer = buf,
     callback = function() M.update_input_win() end,
@@ -795,13 +1135,17 @@ function M.input_history(direction)
   if #history == 0 then return end
 
   if input.index == 0 and direction < 0 then
-    input.draft = table.concat(vim.api.nvim_buf_get_lines(input.buf, 0, -1, false), "\n")
+    -- The draft keeps the complete prompt: markers expand back, so a
+    -- collapsed paste survives the history round trip.
+    input.draft = M.input_text()
   end
   local index = math.max(0, math.min(#history, (input.index or 0) - direction))
   input.index = index
 
   local text = index == 0 and (input.draft or "") or history[#history - index + 1]
   vim.api.nvim_buf_set_lines(input.buf, 0, -1, false, util.lines(text))
+  -- Programmatic change: the recalled text is the new baseline, not a paste.
+  reset_paste_baseline()
   local last = vim.api.nvim_buf_line_count(input.buf)
   local last_line = vim.api.nvim_buf_get_lines(input.buf, last - 1, last, false)[1] or ""
   if input.win and vim.api.nvim_win_is_valid(input.win) then
@@ -977,9 +1321,14 @@ function M.open_input(prefill, selection, fresh)
     state.input.index = 0
     state.input.draft = ""
     state.input.attachments = {}
+    M.clear_pastes()
   end
 
   local buf = M.input_buf()
+  -- The setup below is one programmatic change, not a paste: guard it so a
+  -- long prefill does not collapse, then take it as the diff baseline (only
+  -- newly inserted text collapses from here on).
+  state.input.collapsing = true
   if prefill and prefill ~= "" then
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, util.lines(prefill))
   else
@@ -992,6 +1341,8 @@ function M.open_input(prefill, selection, fresh)
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
     end
   end
+  state.input.collapsing = false
+  state.input.prev_text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
 
   M.update_input_win()
   if state.input.win and vim.api.nvim_win_is_valid(state.input.win) then
@@ -1010,6 +1361,7 @@ function M.insert_newline()
   local row, col = unpack(vim.api.nvim_win_get_cursor(win))
   local line = vim.api.nvim_buf_get_lines(state.input.buf, row - 1, row, false)[1] or ""
   vim.api.nvim_buf_set_lines(state.input.buf, row - 1, row, false, { line:sub(1, col), line:sub(col + 1) })
+  reset_paste_baseline()
   pcall(vim.api.nvim_win_set_cursor, win, { row + 1, 0 })
   vim.cmd("startinsert!")
 end
@@ -1022,6 +1374,7 @@ function M.insert_input_text(text)
   local line = vim.api.nvim_buf_get_lines(state.input.buf, row - 1, row, false)[1] or ""
   vim.api.nvim_buf_set_lines(state.input.buf, row - 1, row, false,
     { line:sub(1, col) .. text .. line:sub(col + 1) })
+  reset_paste_baseline()
   pcall(vim.api.nvim_win_set_cursor, win, { row, col + #text })
   M.update_input_win()
 end
@@ -1086,7 +1439,9 @@ end
 function M.input_text()
   local buf = state.input.buf
   if not (buf and vim.api.nvim_buf_is_valid(buf)) then return "" end
-  return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+  local raw = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+  -- Collapsed pastes expand back: what is sent is the complete prompt.
+  return M.expand_pastes(buf, raw)
 end
 
 function M.submit()
@@ -1099,6 +1454,10 @@ function M.submit()
     return
   end
 
+  -- Placeholder expansion must run on the typed text only: capture the raw
+  -- prompt (markers in place) and the pastes they stand for *before* clearing.
+  local raw = M.input_raw()
+  local pastes = M.paste_entries()
   local target = state.input.target
   local selection = state.input.selection
   local attachments = state.input.attachments
@@ -1116,6 +1475,11 @@ function M.submit()
   if state.input.buf and vim.api.nvim_buf_is_valid(state.input.buf) then
     vim.api.nvim_buf_set_lines(state.input.buf, 0, -1, false, { "" })
   end
+  M.clear_pastes()
+  -- The buffer is now empty: take that as the baseline so the very first paste
+  -- into the fresh prompt is still collapsed (with a nil baseline it would be
+  -- recorded as the baseline and left expanded).
+  reset_paste_baseline()
 
   -- `<CR>` is handled while insert mode is being processed, so closing the
   -- window here and reopening it afterwards made the cursor (and the insert
@@ -1129,7 +1493,15 @@ function M.submit()
     M.close_input()
   end
 
-  M.send(text, { target = target, selection = selection, attachments = attachments })
+  M.send(text, {
+    target = target,
+    selection = selection,
+    attachments = attachments,
+    -- Expand placeholders on the typed text, then put the pasted text back
+    -- verbatim (see `M.paste_entries`).
+    expand_from = raw,
+    pastes = pastes,
+  })
   M.after_submit()
 end
 
@@ -1162,16 +1534,23 @@ end
 --------------------------------------------------------------------------------
 
 ---@param text string
----@param opts? { target?: table, selection?: table, attachments?: table[], delivery?: string, new_session?: boolean }
+---@param opts? { target?: table, selection?: table, attachments?: table[], delivery?: string, new_session?: boolean, expand_from?: string, pastes?: table[] }
 function M.send(text, opts)
   opts = opts or {}
   state.last_prompt = { text = text, opts = opts }
   local target = opts.target
-  local expanded, files = context.expand(text, {
+  -- `expand_from` is the raw prompt (paste markers in place); placeholders are
+  -- expanded on it and the pasted text is substituted afterwards, so a pasted
+  -- `@this` is not mistaken for prompt syntax.
+  local source = opts.expand_from or text
+  local expanded, files = context.expand(source, {
     bufnr = target and target.bufnr or nil,
     line = target and target.cursor and target.cursor[1] or nil,
     selection = opts.selection,
   })
+  if opts.pastes and #opts.pastes > 0 then
+    expanded = M.substitute_pastes(expanded, opts.pastes)
+  end
   -- Pasted/attached images ride along as data: URLs on the same `files` list.
   for _, image in ipairs(opts.attachments or {}) do
     files[#files + 1] = {
@@ -1289,6 +1668,10 @@ function M.clear()
   state.input.index = 0
   state.input.draft = ""
   state.input.attachments = {}
+  -- NOTE: the prompt buffer is not cleared here (this is `:OpencodeClear`, the
+  -- *panel*). Dropping the paste markers while leaving `[Pasted …]` in the
+  -- prompt turned them into literal text on the next send; the markers belong to
+  -- the prompt and are cleared by `submit`/`open_input(fresh)` instead.
   state.thinking = false
   state.reasoning_text = nil
   state.reasoning_open = false
@@ -1346,6 +1729,10 @@ end
 function M.render_messages(messages)
   local renderer = M.renderer()
   local index = 0
+  -- The replay is the authoritative conversation for this session. Clear first:
+  -- attaching to a session that is already streaming can leave live deltas in
+  -- the panel, and appending the history after them duplicated/mis-ordered it.
+  renderer:clear()
   -- A replay writes the panel while the live stream keeps delivering events:
   -- mark it so a tool result that belongs to an older message is deferred to
   -- the end of the turn instead of splitting the text being replayed.
@@ -1360,7 +1747,11 @@ function M.render_messages(messages)
           renderer:delta("text", item.text or "")
           renderer:finalize()
         elseif type(item) == "table" and item.type == "reasoning" then
-          renderer:delta("dim", item.text or "")
+          -- Match the live rendering (header + gutter): replaying reasoning as
+          -- bare `dim` text made it look like part of the answer and impossible
+          -- to tell the two apart.
+          renderer:note(THINKING_HEADER, "meta")
+          renderer:stream("dim", item.text or "", GUTTER)
           renderer:finalize()
         elseif type(item) == "table" and item.type == "tool" then
           index = index + 1
@@ -1700,6 +2091,7 @@ function M.on_event(ev)
     end
   elseif kind == "session.execution.started" then
     state.turn_had_text = false
+    state.turn_serial = (state.turn_serial or 0) + 1
     state.reasoning_active = false
     -- A history replay that is still in flight must stop holding tool results:
     -- the turn running now is live, and its results belong where they arrive.

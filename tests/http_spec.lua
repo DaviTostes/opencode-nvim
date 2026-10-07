@@ -263,5 +263,38 @@ test("chunked response for a body-length request", function()
   end)
 end)
 
+test("connection closed before the status line is an error", function()
+  -- Regression: `Parser:eof` finished with `err == nil` and `status == nil`, and
+  -- the API layer then raised on `nil < 200` inside a scheduled callback, so the
+  -- request never called back and the panel stayed "running".
+  with_server(function(client)
+    client:close()
+  end, function(server)
+    local done, err = false, nil
+    http.request(server, { method = "GET", path = "/x", timeout = 1000 }, function(e)
+      err, done = e, true
+    end)
+    assert(wait_for(function() return done end), "timeout")
+    assert(type(err) == "string" and err:find("before the response", 1, true), tostring(err))
+  end)
+end)
+
+test("truncated chunked body is an error", function()
+  -- Regression: EOF in the middle of a chunked body was reported as a clean
+  -- success with a partial body.
+  with_server(function(client)
+    client:write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+    client:write("5\r\nhello\r\n") -- missing the terminating 0-length chunk
+    client:close()
+  end, function(server)
+    local done, err = false, nil
+    http.request(server, { method = "GET", path = "/x", timeout = 1000 }, function(e)
+      err, done = e, true
+    end)
+    assert(wait_for(function() return done end), "timeout")
+    assert(type(err) == "string" and err:find("chunked", 1, true), tostring(err))
+  end)
+end)
+
 io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

@@ -103,6 +103,31 @@ test("streams frames split across chunks", function()
   server:close()
 end)
 
+test("repeated stream failures drop the cached server", function()
+  -- Regression: the resolved address was cached and reused forever, so after a
+  -- service restart the stream retried a dead port indefinitely.
+  local discovery = require("opencode-nvim.discovery")
+  local saved_res, saved_reset, saved_stream = discovery.resolve, discovery.reset, http.stream
+  local resets, on_end = 0, nil
+  discovery.resolve = function(cb) cb(nil, { host = "127.0.0.1", port = 1 }) end
+  discovery.reset = function() resets = resets + 1 end
+  http.stream = function(_, _, opts)
+    on_end = opts.on_end
+    return { close = function() end }
+  end
+  sse.stop()
+  sse.start({ on_event = function() end })
+  assert(on_end, "the stream was not started")
+  on_end("boom")
+  local after_one = resets
+  on_end("boom")
+  local after_two = resets
+  discovery.resolve, discovery.reset, http.stream = saved_res, saved_reset, saved_stream
+  sse.stop()
+  assert(after_one == 0, "the cached server was dropped after a single failure")
+  assert(after_two >= 1, "the cached server was never dropped after repeated failures")
+end)
+
 test("status reports off by default", function()
   assert(sse.status() == "off", sse.status())
 end)

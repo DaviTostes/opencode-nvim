@@ -10,6 +10,8 @@ local queue = {}
 local deferred = {}
 local active = nil
 local paused = false
+--- Session whose waiting lists `M.sync` last refreshed (a change resets them).
+local synced_session = nil
 
 local ACTION_LABEL = {
   edit = "edit a file",
@@ -66,11 +68,19 @@ end
 
 local function reply(request, decision, message)
   active = nil
-  api.reply_permission(session.id(), request.id, decision, message, function(err)
-    if err then
-      log.error("failed to reply to the permission: " .. require("opencode-nvim.util").err_text(err))
-    end
-  end)
+  -- Reply to the session the request came from, not to whatever session is
+  -- current now: attaching another session while the dialog is open used to
+  -- post the decision to the wrong session (404) and leave the turn paused.
+  local sid = request.sessionID or session.id()
+  if not sid then
+    log.error("cannot reply to the permission: no session")
+  else
+    api.reply_permission(sid, request.id, decision, message, function(err)
+      if err then
+        log.error("failed to reply to the permission: " .. require("opencode-nvim.util").err_text(err))
+      end
+    end)
+  end
   vim.schedule(function()
     if not paused then M.next() end
   end)
@@ -230,8 +240,12 @@ function M.next()
     local proposed = patches_from_request(request)
     if proposed then return present(request, proposed, "proposal") end
     pending_patches(request, function(patches)
+      -- The turn may have ended (or another request taken over) while the diff
+      -- was in flight; presenting now would reopen a stale dialog.
+      if active ~= request then return end
       if patches and #patches > 0 then return present(request, patches, "proposal") end
       session.diff({ context = 3 }, function(err, diff_patches, source)
+        if active ~= request then return end
         if err then
           log.debug("could not fetch the diff:", require("opencode-nvim.util").err_text(err))
           return present(request, nil)
@@ -278,9 +292,18 @@ function M.on_event(ev)
     M.next()
   elseif ev.type == "permission.replied" or ev.type == "permission.rejected" then
     local data = ev.data or {}
+    local id = data.id or data.requestID
     if active and (data.id == active.id or data.requestID == active.id) then
       active = nil
       M.next()
+    end
+    -- The same request may still be waiting in a list (answered from the TUI,
+    -- or rejected by the server); drop it there too.
+    for index = #queue, 1, -1 do
+      if queue[index].id == id then table.remove(queue, index) end
+    end
+    for index = #deferred, 1, -1 do
+      if deferred[index].id == id then table.remove(deferred, index) end
     end
   elseif ev.type == "session.execution.interrupted" or ev.type == "session.execution.failed"
     or ev.type == "session.execution.succeeded" then
@@ -297,9 +320,23 @@ function M.on_event(ev)
 end
 
 --- Pick up requests that were already pending when the session attached.
+---
+--- Also the point where a session switch resets the waiting lists: doing it here
+--- (rather than in `on_event`) keeps it independent of handler ordering and of
+--- whether the fetch answers synchronously (`opencode.session.changed` handlers
+--- run before the `on_any` permission handler).
 function M.sync(cb)
-  if not session.id() then return cb and cb() end
-  api.permissions(session.id(), function(err, requests)
+  local id = session.id()
+  if not id then return cb and cb() end
+  if id ~= synced_session then
+    synced_session = id
+    active = nil
+    queue = {}
+    deferred = {}
+    paused = false
+    require("opencode-nvim.ui.diff").close_if("permission")
+  end
+  api.permissions(id, function(err, requests)
     if not err and type(requests) == "table" then
       for _, request in ipairs(requests) do
         if request.id and not known(request.id) then

@@ -15,6 +15,10 @@ local state = {
   timer = nil,
   waiters = {},
   waiting = false,
+  -- Consecutive stream ends without a `server.connected` in between. After a
+  -- couple, the cached address is suspect (the service may have restarted on a
+  -- new port) and is dropped so the retry re-resolves it.
+  failures = 0,
 }
 
 local MAX_BACKOFF = 10000
@@ -178,6 +182,7 @@ function M.start(opts)
         state.connected = true
         state.status = "connected"
         state.backoff = 500
+        state.failures = 0
         flush_waiters(nil)
       end
       if not state.on_event then return end
@@ -212,6 +217,12 @@ function M.start(opts)
         else
           log.debug("sse ended: connection closed by the server")
         end
+        -- The cached address may be stale (a restarted service; a listener that
+        -- accepts and closes). Drop it after a couple of failed rounds so the
+        -- next resolve probes service.json again instead of reconnecting to a
+        -- dead port forever.
+        state.failures = (state.failures or 0) + 1
+        if state.failures >= 2 then discovery.reset() end
         local delay = state.backoff
         state.backoff = math.min(state.backoff * 2, MAX_BACKOFF)
         schedule_retry(delay)

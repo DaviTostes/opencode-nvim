@@ -203,5 +203,59 @@ test("the :OpencodeQuestion command exists", function()
   assert(vim.fn.exists(":OpencodeQuestion") == 2, "missing :OpencodeQuestion")
 end)
 
+test("<Esc> on a question keeps it pending instead of answering it", function()
+  -- Regression: dismissing the popup fell through to the per-field "skip"
+  -- path, so a single-question form replied with an empty answer and the
+  -- server considered it answered. The docs promise "answer later".
+  replies = {}
+  local single = vim.deepcopy(FORM)
+  single.id = "frm_later"
+  event.emit({ type = "form.created", data = { form = single } })
+  settle()
+  assert(#form.pending() == 1, "the form should be pending")
+
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "x", false)
+  settle()
+  assert(#replies == 0, "Esc must not answer the form")
+  assert(#form.pending() == 1, "Esc must leave the form pending")
+
+  -- :OpencodeQuestion brings it back
+  local saved = api.session_forms
+  api.session_forms = function(_, cb) cb(nil, {}) end
+  local ok, err = pcall(function()
+    form.sync(function() end)
+    form.resume()
+    settle()
+    local text = popup_text()
+    assert(text:find("Which language do you prefer?", 1, true), "the question did not come back:\n" .. text)
+    vim.api.nvim_feedkeys("1", "x", false)
+    settle()
+    assert(#replies == 1, "the re-shown question was not answered")
+    assert(#form.pending() == 0, "the form is still pending")
+  end)
+  api.session_forms = saved
+  assert(ok, err)
+end)
+
+test("<CR> on the question body does not answer with option 1", function()
+  -- Regression: `<CR>` anywhere that was not an option line fell through to
+  -- option 1, silently answering the agent when the user just pressed Enter.
+  replies = {}
+  local single = vim.deepcopy(FORM)
+  single.id = "frm_cr"
+  event.emit({ type = "form.created", data = { form = single } })
+  settle()
+  assert(#form.pending() == 1, "the form should be pending")
+  vim.api.nvim_feedkeys("\r", "x", false)
+  settle()
+  assert(#replies == 0, "Enter on the body answered the form")
+  assert(#form.pending() == 1, "the form was answered or dismissed")
+  -- answer for real so the next test starts clean
+  vim.api.nvim_feedkeys("1", "x", false)
+  settle()
+  assert(#replies == 1, "the question could not be answered")
+  assert(#form.pending() == 0, "the form is still pending")
+end)
+
 io.write(string.format("\n%d failure(s)\n", failures))
 os.exit(failures == 0 and 0 or 1)

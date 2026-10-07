@@ -183,7 +183,10 @@ function M.patches(opts)
     filetype = "diff",
     keymaps = keymaps,
     footer = footer(hint),
-    kind = "permission",
+    -- Only an approval dialog is force-closed when a turn ends or the session
+    -- changes; a read-only `:OpencodeDiff`/`gd` view opened by the user must
+    -- survive that (it used to be tagged `permission` and vanish mid-read).
+    kind = opts.on_choice and "permission" or "diff",
   })
 end
 
@@ -369,17 +372,16 @@ function M.choose(opts)
     end
   end
 
-  -- <CR> picks the option under the cursor
+  -- <CR> picks the option under the cursor. It does nothing when the cursor is
+  -- not on an option: it used to fall through to option 1, silently answering
+  -- the agent with the first choice when the user just pressed Enter on the body.
   keymaps[#keymaps + 1] = { "<CR>", function()
     local line = vim.api.nvim_get_current_line()
     local index = tonumber(line:match("^%s*%[(%d+)%]"))
+    if not (index and opts.options[index]) then return end
     local cb = opts.on_choice
-    if index and opts.options[index] then
-      close()
-      return cb(index)
-    end
     close()
-    cb(1)
+    cb(index)
   end, "choose" }
 
   if opts.on_other then

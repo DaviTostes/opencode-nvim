@@ -9,15 +9,41 @@ local log = require("opencode-nvim.log")
 --- `{ data = ... }` envelope used by the server.
 local M = {}
 
+--- Whether replaying a request after a transport error is safe.
+---
+--- Idempotent methods can always be retried. A non-idempotent one (POST/PATCH)
+--- only when the connection was never established, so the server cannot have
+--- applied it; a timeout or a read error is ambiguous and must not resend a
+--- prompt or create a second session.
+---@param opts table
+---@param err any
+---@return boolean
+local function retry_safe(opts, err)
+  local method = (opts.method or "GET"):upper()
+  if method == "GET" or method == "HEAD" or method == "OPTIONS" or method == "DELETE" then
+    return true
+  end
+  return type(err) == "string" and err:find("^connect failed", 1, true) ~= nil
+end
+
 local function request(opts, cb, retried)
   discovery.resolve(function(resolve_err, server)
     if resolve_err then return cb(resolve_err) end
     local function done(err, status, decoded, text)
       if err and not retried then
+        -- A dead cached address must not poison later requests, but a
+        -- non-idempotent call is only replayed when that is provably safe.
         discovery.reset()
-        return request(opts, cb, true)
+        if retry_safe(opts, err) then
+          return request(opts, cb, true)
+        end
       end
       if err then return cb(err) end
+      -- Defensive: a response with no status line (see `Parser:eof`) must not
+      -- reach the comparisons below, where `nil < 200` raises.
+      if type(status) ~= "number" then
+        return cb("invalid response from the server (no status)")
+      end
       if status == 401 then
         return cb(string.format("unauthorized (401) — check the password in %s", discovery.service_file()))
       end
@@ -310,8 +336,9 @@ function M.ensure(cb, options)
 
     if not agent then return create() end
     -- Only pass an agent the server knows about, otherwise session creation
-    -- fails with a confusing error.
-    M.agents(function(agents_err, agents)
+    -- fails with a confusing error. (`M.agents` takes `(directory, cb)`: passing
+    -- the callback first made `directory` a function and left `cb` nil.)
+    M.agents(options.directory, function(agents_err, agents)
       if agents_err or type(agents) ~= "table" then
         log.debug("could not list agents:", agents_err)
         return create()

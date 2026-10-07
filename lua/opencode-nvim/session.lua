@@ -86,7 +86,11 @@ local function agents_for(directory, cb, wait_for)
           end
           return cb(err, cached)
         end
-        if #agents > #(cached or {}) then agents_cache[directory] = agents end
+        -- Replace the cache with every non-empty list (not just longer ones):
+        -- grow-only kept an agent that was removed or renamed in the project
+        -- config forever. `wait_for` still ignores a cache that lacks the agent
+        -- it is waiting for, so a partially loaded list cannot hide one.
+        if type(agents) == "table" and #agents > 0 then agents_cache[directory] = agents end
         if wait_for and not find_agent(agents, wait_for) and index < attempts then
           return vim.defer_fn(function() attempt(index + 1) end, 250)
         end
@@ -238,18 +242,21 @@ function M.resolve_model(explicit, catalog)
   local preferred = M.preferred_model()
   if preferred ~= nil then candidates[#candidates + 1] = preferred end
 
+  local dropped
   for _, candidate in ipairs(candidates) do
     if type(candidate) == "table" and candidate.providerID and candidate.id then
       if not catalog or #catalog == 0 then return candidate end
+      -- Try the next candidate instead of giving up: an explicit model that is
+      -- no longer offered must not shadow a still-valid `model.json` entry.
       for _, known in ipairs(catalog) do
         if known.id == candidate.id and known.providerID == candidate.providerID then
           return { providerID = known.providerID, id = known.id, variant = candidate.variant or known.variant }
         end
       end
-      return nil, string.format("%s/%s is not available", candidate.providerID, candidate.id)
+      dropped = string.format("%s/%s is not available", candidate.providerID, candidate.id)
     end
   end
-  return nil
+  return nil, dropped
 end
 
 local function create_session(directory, agent, model, opts, retry, cb)
@@ -374,6 +381,9 @@ function M.ensure(opts, cb)
         log.warn(dropped .. " — falling back to the server default model")
       end
       create_session(directory, agent, model, opts, false, function(err, info)
+        -- The watchdog may already have reported a timeout: do not adopt a
+        -- session (and flip the current one) after the caller was told it failed.
+        if finished then return end
         if err then return finish(err) end
         finalize_agent(info, finish)
       end)
@@ -385,6 +395,9 @@ end
 function M.attach(id, cb)
   api.get_session(id, function(err, info)
     if err then return cb(err) end
+    -- `api.data` returns `(nil, nil)` for a 2xx with an empty/invalid body, and
+    -- the lines below dereference `info`.
+    if type(info) ~= "table" then return cb("session not found (invalid response)") end
     M.set_current(info)
     M.start_stream()
     -- Seed the context-window counter (the session GET does not carry it).

@@ -64,21 +64,23 @@ function R:draw()
   -- cursor programmatically, e.g. when folding, used to turn it off).
   if self.on_before_draw then pcall(self.on_before_draw) end
   local start = math.min(self.drawn, self.committed)
+
+  -- Highlights: only the region about to be rewritten is cleared and re-marked.
+  -- The clear happens *before* `nvim_buf_set_lines`: replacing the lines moves
+  -- the extmarks anchored to them (right gravity), so a clear afterwards missed
+  -- them and duplicates accumulated (a tool header re-marked on every status
+  -- update, an old group left beside a new one).
+  if (self.marked or 0) > start then
+    pcall(vim.api.nvim_buf_clear_namespace, self.buf, ns, start, -1)
+  end
+
   local tail = {}
   for index = start + 1, #self.lines do
     tail[#tail + 1] = self.lines[index]
   end
   vim.api.nvim_buf_set_lines(self.buf, start, -1, false, tail)
 
-  -- Highlights: only for lines that are new or were rewritten. Re-applying an
-  -- extmark per line on every draw was the hottest path here (a streaming
-  -- reasoning block rewrote its whole tail ~14 times per second).
-  local previous = self.marked or 0
-  if previous > start then
-    pcall(vim.api.nvim_buf_clear_namespace, self.buf, ns, start, previous)
-    previous = start
-  end
-  for index = previous + 1, #self.lines do
+  for index = start + 1, #self.lines do
     local group = HL[self.kinds[index] or "text"]
     if group then
       pcall(vim.api.nvim_buf_set_extmark, self.buf, ns, index - 1, 0, { line_hl_group = group })
@@ -113,14 +115,22 @@ function R:finalize()
   self.closed = true
 end
 
---- Rewind the immutable watermark so `line` (and everything after) is
---- redrawn.
+--- Rewind the watermarks so `line` (and everything after) is redrawn.
+---
+--- All three go back together: `draw()` rewrites from
+--- `min(drawn, committed)`, so leaving a stale `drawn` ahead would skip the
+--- rewritten lines and the buffer would keep showing the old text while the
+--- renderer believes it is in sync (a cut-looking tail that never heals).
 function R:rewind(line)
   if line - 1 < self.committed then
     self.committed = math.max(0, line - 1)
   end
-  -- the marks of the rewritten region are rebuilt by the next draw
-  self.marked = math.min(self.marked or 0, math.max(0, line - 1))
+  self.drawn = math.min(self.drawn or 0, math.max(0, line - 1))
+  -- `marked` is deliberately *not* clamped here: `draw` clears the highlights of
+  -- the rewritten region (from `min(drawn, committed)` to the end) *before*
+  -- replacing those lines, and `marked` is what tells it a clear is needed.
+  -- Clamping it to the same line made every rewrite skip the clear, so
+  -- `line_hl_group` extmarks accumulated.
   self.closed = true
 end
 
@@ -172,7 +182,12 @@ function R:text_finished(text)
     -- cut off tail. Comparing the full text with `util.lines` (which keeps the
     -- trailing empty line) rebuilds the exact line list, so the blank line under
     -- the answer is written at the end of the part instead of after it.
-    if table.concat(current, "\n") .. "\n" ~= text then
+    --
+    -- The joined lines *are* the rendered text, so this compares them directly:
+    -- appending a newline here made the check true even when the block already
+    -- matched (a redundant rewrite of every part) and missed the real case of a
+    -- dropped trailing newline.
+    if table.concat(current, "\n") ~= text then
       local replacement = util.lines(text)
       local lines, kinds = {}, {}
       for index = 1, start - 1 do
@@ -184,6 +199,9 @@ function R:text_finished(text)
         kinds[#kinds + 1] = "text"
       end
       self.lines, self.kinds = lines, kinds
+      -- Rewind before finalizing: the block changed under lines the buffer
+      -- already shows, and `draw()` starts at `min(drawn, committed)`.
+      self:rewind(start)
     end
   end
   self.block_start, self.block_kind = nil, nil
@@ -206,7 +224,7 @@ function R:repair_last_text(text)
   while start > 1 and self.kinds[start - 1] == "text" do start = start - 1 end
   local current = {}
   for index = start, last do current[#current + 1] = self.lines[index] end
-  if table.concat(current, "\n") .. "\n" == text then return false end
+  if table.concat(current, "\n") == text then return false end
   local lines, kinds = {}, {}
   for index = 1, start - 1 do
     lines[#lines + 1] = self.lines[index]
@@ -265,6 +283,13 @@ function R:remove_line(text)
     if self.lines[index] == text then
       table.remove(self.lines, index)
       table.remove(self.kinds, index)
+      -- Keep the tool line map in sync: every header after the removed line
+      -- moved up one, and `tool_update`/`tool_end` address it by this index.
+      -- Without this a later update wrote the header onto (or past) the wrong
+      -- line, duplicating it and corrupting the answer.
+      for _, tool in pairs(self.tools) do
+        if tool.line and tool.line > index then tool.line = tool.line - 1 end
+      end
       -- Rewrite from the line that was removed: everything after it shifted up.
       -- Clamping the watermarks to the new length (what this used to do) left
       -- the tail off by one line in the buffer ("▸ thinking…" reappearing and

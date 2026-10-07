@@ -38,6 +38,7 @@ function M.define_highlights()
     OpencodeError = { link = "DiagnosticError" },
     OpencodeNote = { link = "Special" },
     OpencodeMeta = { link = "Comment" },
+    OpencodePaste = { link = "Special" },
   }
   for name, spec in pairs(definitions) do
     spec.default = true
@@ -56,9 +57,17 @@ function M.wire()
     session.on_event(ev)
   end)
 
-  -- Pick up questions that were already pending (attaching, or a missed event).
-  event.on("opencode.session.changed", function() form.sync() end)
-  event.on("session.idle", function() form.sync() end)
+  -- Pick up questions and permission requests that were already pending
+  -- (attaching, a missed event, or a stream that was down). Both sweeps are
+  -- idempotent: a request that already arrived by event is skipped.
+  event.on("opencode.session.changed", function()
+    form.sync()
+    permission.sync()
+  end)
+  event.on("session.idle", function()
+    form.sync()
+    permission.sync()
+  end)
 
   -- Attach the bus to the SSE stream. This is what turns the stream into
   -- rendered text, tool lines, permission popups and buffer reloads.
@@ -109,10 +118,15 @@ function M.create_commands()
     M.edit_this(M.range_from_args(args))
   end, { range = true, desc = "ask for a change in the selection (or file)" })
   command("OpencodePermissions", function() permission.select() end, { desc = "pending permissions" })
-  command("OpencodeQuestion", function() form.sync(function(err)
-    if err then return fail("question", err) end
-    if #form.pending() == 0 then log.notify("no pending question") end
-  end) end, { desc = "show the question waiting for an answer" })
+  command("OpencodeQuestion", function()
+    form.sync(function(err)
+      -- Bring back a question the user dismissed with <Esc> even when the
+      -- server sweep fails (the form is already in memory).
+      form.resume()
+      if err then return fail("question", err) end
+      if #form.pending() == 0 then log.notify("no pending question") end
+    end)
+  end, { desc = "show the question waiting for an answer" })
   command("OpencodeEvents", function() M.events() end, { desc = "events received from the server" })
   command("OpencodeHealth", function() M.health() end, { desc = "check the connection to opencode" })
   command("OpencodeClose", function() M.close() end, { desc = "close the panel" })
@@ -773,8 +787,9 @@ function M.doctor()
     local options = cfg.get()
     local approval = cfg.approval()
     local ui = options.ui or {}
-    cb(string.format("config: agent=%s  approval.agent=%s  review=%s  autoread=%s",
-      tostring(options.agent), tostring(approval.agent), tostring(approval.review), tostring(vim.o.autoread)))
+    -- Append these before `cb`: `cb` may be the call that reaches the last
+    -- job and renders the float, and then anything appended afterwards would
+    -- never make it into the window.
     -- focus-related settings: a config pinning these is the usual reason for
     -- "it keeps moving my cursor" (see the focus values below)
     lines[#lines + 1] = string.format("focus: open=%s  after_submit=%s  escape=%s  keymaps=%s",
@@ -783,6 +798,8 @@ function M.doctor()
     lines[#lines + 1] = string.format("approval: enabled=%s  review=%s  agent=%s  tool_output=%s",
       tostring(cfg.approval().enabled ~= false), tostring(cfg.approval().review),
       tostring(cfg.approval().agent), tostring((ui.panel or {}).tool_output))
+    cb(string.format("config: agent=%s  approval.agent=%s  review=%s  autoread=%s",
+      tostring(options.agent), tostring(approval.agent), tostring(approval.review), tostring(vim.o.autoread)))
   end)
 
   -- Never leave the user without an answer, even if a probe hangs.
