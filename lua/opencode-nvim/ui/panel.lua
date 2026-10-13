@@ -1,4 +1,5 @@
 local api = require("opencode-nvim.api")
+local catalog = require("opencode-nvim.catalog")
 local cfg = require("opencode-nvim.config")
 local context = require("opencode-nvim.context")
 local event = require("opencode-nvim.event")
@@ -87,21 +88,35 @@ function M.scroll_to_bottom()
   if not (win and vim.api.nvim_win_is_valid(win)) then return end
   if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return end
   local last = vim.api.nvim_buf_line_count(state.buf)
-  -- Fast path: the cursor is on the last line and the view already shows it.
+  -- What has to be on screen is the *end of the last line*, not just its number.
+  -- The panel wraps, so a long final paragraph is only partly displayed: `w$`
+  -- and the cursor already report the last line while its tail sits below the
+  -- viewport and the answer looks cut. That only shows up on long answers,
+  -- which end in a long wrapped line. `screenpos` takes this window without
+  -- switching to it, and reads 0 for a position that is not visible.
+  local last_line = vim.api.nvim_buf_get_lines(state.buf, last - 1, last, false)[1] or ""
+  local endcol = #last_line
+  local position = vim.fn.screenpos(win, last, math.max(endcol, 1))
+  local visible = type(position) == "table" and position.row ~= 0 or false
+  -- Fast path: the cursor is on the last line and its end is already shown.
   -- Drawing a tool header or replacing a line calls this with no new line to
   -- reveal, and the `winrestview` below is an Ex command (the expensive part).
   local cursor = vim.api.nvim_win_get_cursor(win)
-  if cursor[1] >= last and vim.fn.line("w$", win) >= last then return end
-  -- Moving another window's cursor is invisible to the mode and works without
-  -- focus, so this runs always: the panel keeps following while you type.
-  pcall(vim.api.nvim_win_set_cursor, win, { last, 0 })
+  if cursor[1] >= last and visible then return end
+  -- Put the cursor on the last character, so a wrapped final line scrolls its
+  -- tail into view (column 0 kept the line's first rows visible and the rest
+  -- below the fold). Moving another window's cursor is invisible to the mode
+  -- and works without focus, so this runs always: the panel keeps following
+  -- while you type.
+  local col = math.max(0, endcol - 1)
+  pcall(vim.api.nvim_win_set_cursor, win, { last, col })
   -- Live, even mid-typing: `win_execute` borrows the window for one Ex command
   -- without switching the focus (unlike `nvim_win_call`, which re-attributes
   -- insert mode to the window it jumps to), so it is safe while inserting.
   -- Queueing this for InsertLeave froze the panel for the whole turn whenever
   -- the answer streamed while you were typing: the final lines sat below the
   -- viewport looking cut until you came back.
-  pcall(vim.fn.win_execute, win, string.format("call winrestview({'lnum': %d})", last))
+  pcall(vim.fn.win_execute, win, string.format("call winrestview({'lnum': %d, 'col': %d})", last, col))
 end
 
 --- True when the last line of the buffer is on screen, i.e. the user is
@@ -1155,27 +1170,16 @@ function M.input_history(direction)
   vim.cmd("startinsert!")
 end
 
---- `@` placeholders and what each one attaches. The description shows up in the
---- completion menu, so `@t` tells you what `@this` does before you pick it.
-local PLACEHOLDERS = {
-  { word = "@this", menu = "file or selection at the cursor",
-    info = "the file (and selection) the cursor is in" },
-  { word = "@buffer", menu = "the current buffer",
-    info = "the current buffer; attached as a file when it has unsaved changes" },
-  { word = "@buffers", menu = "the open buffers",
-    info = "the list of open, listed buffers" },
-  { word = "@diagnostics", menu = "diagnostics at the cursor",
-    info = "the diagnostics of the file (or the selection), one per line" },
-  { word = "@diff", menu = "the working tree diff",
-    info = "`git diff` of the session directory" },
-}
-
 --- Completion items for the `@` placeholders matching `prefix`.
+---
+--- The list is the built-ins plus whatever `context.placeholders` added (or
+--- replaced): `context` owns the single registry, so the menu and the expansion
+--- can never drift apart.
 ---@param prefix string
 ---@return table[]
 function M.placeholder_items(prefix)
   local items = {}
-  for _, item in ipairs(PLACEHOLDERS) do
+  for _, item in ipairs(context.placeholder_list()) do
     if item.word:sub(1, #prefix) == prefix then
       items[#items + 1] = { word = item.word, menu = item.menu, info = item.info, kind = "k" }
     end
@@ -1196,10 +1200,19 @@ function M.complete(findstart, base)
   end
 
   base = base or ""
-  -- `@` is only for the placeholders (they are expanded before sending); paths
-  -- complete as plain text, exactly as they are typed.
+  -- `/` is only for the custom commands (fetched in the background; the menu
+  -- shows whatever is cached and fills in once the request lands).
+  if base:sub(1, 1) == "/" then
+    catalog.warm()
+    return catalog.command_items(base)
+  end
+  -- `@` is for the placeholders plus the agents a prompt can mention (the
+  -- subagents). Placeholders are expanded before sending; mentions ride along
+  -- as `agents` attachments (see `M.mentioned_agents`).
   if base:sub(1, 1) == "@" then
-    return M.placeholder_items(base)
+    local items = M.placeholder_items(base)
+    vim.list_extend(items, catalog.agent_items(base))
+    return items
   end
   local items = {}
   local ok, files = pcall(vim.fn.getcompletion, base, "file")
@@ -1226,9 +1239,19 @@ function M.maybe_complete()
   local line = vim.api.nvim_get_current_line()
   local col = vim.api.nvim_win_get_cursor(0)[2]
   if col > #line then col = #line end
-  local prefix = line:sub(1, col):match("@[%w]*$")
+  -- A leading `/` opens the command menu (like the TUI palette). It only
+  -- counts at the very start of the prompt, so a path mid-sentence is left
+  -- alone.
+  if vim.api.nvim_win_get_cursor(0)[1] == 1 and line:sub(1, col):match("^/[%w_%-]*$") then
+    catalog.warm()
+    local commands = catalog.command_items(line:sub(1, col))
+    if #commands > 0 then vim.fn.complete(1, commands) end
+    return
+  end
+  local prefix = line:sub(1, col):match("@[%w_%-]*$")
   if not prefix then return end
   local items = M.placeholder_items(prefix)
+  vim.list_extend(items, catalog.agent_items(prefix))
   if #items == 0 then return end
   -- The placeholder is already written out in full (`@this`): no menu to show,
   -- and reopening one would only flash in the way of the next keystroke.
@@ -1444,6 +1467,50 @@ function M.input_text()
   return M.expand_pastes(buf, raw)
 end
 
+--- Agent ids mentioned with `@name` in `text`, as `{ name = id }` attachments
+--- for the prompt body.
+---
+--- Only agents a prompt can attach (subagents) count, and only when the `@`
+--- starts a token, so `user@host` and the `@this`-style placeholders are left
+--- alone.
+---@param text string
+---@return table[]
+function M.mentioned_agents(text)
+  local out, seen = {}, {}
+  if type(text) ~= "string" or text == "" then return out end
+  local pos = 1
+  while true do
+    local at = text:find("@", pos, true)
+    if not at then break end
+    local name = text:match("^@([%w_%-]+)", at)
+    local boundary = at == 1 or text:sub(at - 1, at - 1):match("[%w_]") == nil
+    if name and boundary and not seen[name] then
+      local agent = catalog.find_agent(name)
+      local mode = agent and (agent.mode or agent.type)
+      if agent and mode ~= "primary" then
+        seen[name] = true
+        out[#out + 1] = { name = name }
+      end
+    end
+    pos = at + 1
+  end
+  return out
+end
+
+--- Append pasted/attached images to a `files` list as data: URLs.
+---@param files table[]
+---@param attachments table[]
+---@return table[]
+function M.attachments_to_files(files, attachments)
+  for _, image in ipairs(attachments or {}) do
+    files[#files + 1] = {
+      uri = string.format("data:%s;base64,%s", image.mime, image.data),
+      name = image.name,
+    }
+  end
+  return files
+end
+
 function M.submit()
   local text = M.input_text()
   if util.is_blank(text) then
@@ -1493,15 +1560,33 @@ function M.submit()
     M.close_input()
   end
 
-  M.send(text, {
-    target = target,
-    selection = selection,
-    attachments = attachments,
-    -- Expand placeholders on the typed text, then put the pasted text back
-    -- verbatim (see `M.paste_entries`).
-    expand_from = raw,
-    pastes = pastes,
-  })
+  -- Route the prompt: a leading `/name` that names a custom command runs it, a
+  -- leading `!cmd` runs a shell command, anything else is an ordinary prompt.
+  -- `raw`/`pastes` keep placeholder expansion on the typed text (a pasted
+  -- `@this` must not be expanded).
+  local command_name = text:match("^/([%w_%-]+)")
+  local shell_command = text:sub(1, 1) == "!" and util.trim(text:sub(2)) or nil
+  if command_name and catalog.find_command(command_name) then
+    M.send_command(command_name, util.trim(text:sub(#command_name + 2)), {
+      target = target,
+      selection = selection,
+      attachments = attachments,
+      expand_from = raw:sub(#command_name + 2),
+      pastes = pastes,
+    })
+  elseif shell_command and shell_command ~= "" then
+    M.send_shell(shell_command)
+  else
+    M.send(text, {
+      target = target,
+      selection = selection,
+      attachments = attachments,
+      -- Expand placeholders on the typed text, then put the pasted text back
+      -- verbatim (see `M.paste_entries`).
+      expand_from = raw,
+      pastes = pastes,
+    })
+  end
   M.after_submit()
 end
 
@@ -1537,7 +1622,7 @@ end
 ---@param opts? { target?: table, selection?: table, attachments?: table[], delivery?: string, new_session?: boolean, expand_from?: string, pastes?: table[] }
 function M.send(text, opts)
   opts = opts or {}
-  state.last_prompt = { text = text, opts = opts }
+  state.last_prompt = { kind = "prompt", text = text, opts = opts }
   local target = opts.target
   -- `expand_from` is the raw prompt (paste markers in place); placeholders are
   -- expanded on it and the pasted text is substituted afterwards, so a pasted
@@ -1547,17 +1632,15 @@ function M.send(text, opts)
     bufnr = target and target.bufnr or nil,
     line = target and target.cursor and target.cursor[1] or nil,
     selection = opts.selection,
+    directory = session.directory(),
   })
   if opts.pastes and #opts.pastes > 0 then
     expanded = M.substitute_pastes(expanded, opts.pastes)
   end
+  -- `@subagent` mentions attach the subagent to the prompt.
+  local agents = M.mentioned_agents(source)
   -- Pasted/attached images ride along as data: URLs on the same `files` list.
-  for _, image in ipairs(opts.attachments or {}) do
-    files[#files + 1] = {
-      uri = string.format("data:%s;base64,%s", image.mime, image.data),
-      name = image.name,
-    }
-  end
+  M.attachments_to_files(files, opts.attachments)
 
   M.remember_code_win()
   M.ensure_buf()
@@ -1572,12 +1655,80 @@ function M.send(text, opts)
 
   session.prompt(expanded, {
     files = files,
+    agents = agents,
     delivery = opts.delivery,
     new_session = opts.new_session,
   }, function(err)
     if err then
       clear_thinking(M.renderer())
       clear_stall(M.renderer())
+      M.set_status("error")
+      M.renderer():error(err_text(err))
+    end
+  end)
+end
+
+--- Run an OpenCode custom command from the prompt (`/name args`).
+---@param name string command name without the leading `/`
+---@param args string the command arguments, already expanded by `submit`
+---@param opts? { target?: table, selection?: table, attachments?: table[], expand_from?: string, pastes?: table[], new_session?: boolean }
+function M.send_command(name, args, opts)
+  opts = opts or {}
+  state.last_prompt = { kind = "command", name = name, text = args, opts = opts }
+  local target = opts.target
+  local source = opts.expand_from or args
+  -- A command's arguments stay verbatim apart from explicit placeholders: the
+  -- automatic editor context would be read as part of `$ARGUMENTS`.
+  local expanded, files = context.expand(source, {
+    bufnr = target and target.bufnr or nil,
+    line = target and target.cursor and target.cursor[1] or nil,
+    selection = opts.selection,
+    directory = session.directory(),
+    auto = false,
+  })
+  if opts.pastes and #opts.pastes > 0 then
+    expanded = M.substitute_pastes(expanded, opts.pastes)
+  end
+  local agents = M.mentioned_agents(source)
+  M.attachments_to_files(files, opts.attachments)
+
+  M.remember_code_win()
+  M.ensure_buf()
+  M.renderer():user(util.trim("/" .. name .. " " .. args))
+  M.open({ input = false, focus = false })
+  M.set_status("running")
+  state.thinking = true
+  M.renderer():note(THINKING_LINE, "meta")
+  M.scroll_to_bottom()
+
+  session.command(name, expanded, {
+    files = files,
+    agents = agents,
+    new_session = opts.new_session,
+  }, function(err)
+    if err then
+      clear_thinking(M.renderer())
+      clear_stall(M.renderer())
+      M.set_status("error")
+      M.renderer():error(err_text(err))
+    end
+  end)
+end
+
+--- Run a shell command from the prompt (`!cmd`). The server runs it in the
+--- session and streams `session.shell.*` events (rendered in `on_event`).
+---@param command string
+function M.send_shell(command)
+  state.last_prompt = { kind = "shell", text = command }
+  M.remember_code_win()
+  M.ensure_buf()
+  M.renderer():user("!" .. command)
+  M.open({ input = false, focus = false })
+  M.set_status("running")
+  M.scroll_to_bottom()
+
+  session.shell(command, {}, function(err)
+    if err then
       M.set_status("error")
       M.renderer():error(err_text(err))
     end
@@ -1600,6 +1751,12 @@ function M.retry()
     return log.notify("a turn is already running")
   end
   local prompt = state.last_prompt
+  if prompt.kind == "command" then
+    return M.send_command(prompt.name, prompt.text, prompt.opts)
+  end
+  if prompt.kind == "shell" then
+    return M.send_shell(prompt.text)
+  end
   M.send(prompt.text, prompt.opts)
 end
 
@@ -1835,6 +1992,8 @@ function M.on_session(info)
   state.model = info.model and (info.model.id or info.model.modelID) or nil
   M.ensure_buf()
   M.update_title()
+  -- Warm the command/subagent catalogue so `/` and `@` menus are ready.
+  catalog.warm()
 
   -- `fresh` sessions were just created for the prompt being sent: there is no
   -- history to replay, and clearing here would wipe the user's own message.
@@ -1936,6 +2095,8 @@ local HANDLED = {
   ["session.execution.interrupted"] = true,
   ["session.execution.failed"] = true,
   ["session.error"] = true,
+  ["session.shell.started"] = true,
+  ["session.shell.ended"] = true,
   ["session.retry.scheduled"] = true,
   ["session.compaction.started"] = true,
   ["session.compaction.failed"] = true,
@@ -2154,6 +2315,20 @@ function M.on_event(ev)
     end
   elseif kind == "session.error" then
     renderer:error(util.pick_string(data, { "message", "error", "text" }) or "session error")
+  elseif kind == "session.shell.started" then
+    local shell = data.shell or {}
+    renderer:note("$ " .. tostring(shell.command or "shell"), "tool")
+    M.set_status("running")
+  elseif kind == "session.shell.ended" then
+    local shell = data.shell or {}
+    local output = data.output and data.output.output or ""
+    output = output:gsub("\n+$", "")
+    if output ~= "" then
+      renderer:block("toolout", table.concat(util.truncate_lines(util.lines(output), 20, "  "), "\n"))
+    end
+    renderer:note("→ exit " .. tostring(shell.exit), "meta")
+    M.set_status("idle")
+    M.update_title()
   elseif kind == "session.retry.scheduled" then
     local attempt = data.attempt and string.format(" (attempt %d)", data.attempt) or ""
     local reason = util.deep_find(data, { "message", "error" })

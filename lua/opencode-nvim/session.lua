@@ -483,7 +483,7 @@ end
 
 --- Send a prompt to the current session, creating one when needed.
 ---@param text string
----@param opts? { files?: table[], delivery?: string, new_session?: boolean, on_session?: fun(info: table) }
+---@param opts? { files?: table[], agents?: table[], delivery?: string, new_session?: boolean, on_session?: fun(info: table) }
 function M.prompt(text, opts, cb)
   opts = opts or {}
   M.ensure({ force = opts.new_session }, function(err, info)
@@ -496,6 +496,7 @@ function M.prompt(text, opts, cb)
     local function send()
       local body = { text = text }
       if opts.files and #opts.files > 0 then body.files = opts.files end
+      if opts.agents and #opts.agents > 0 then body.agents = opts.agents end
       if opts.delivery then body.delivery = opts.delivery end
       api.prompt(info.id, body, function(prompt_err, inbox)
         if cb then cb(prompt_err, inbox, info) end
@@ -507,6 +508,58 @@ function M.prompt(text, opts, cb)
     sse.ensure(function(stream_err)
       if stream_err then log.warn("event stream: " .. tostring(stream_err)) end
       send()
+    end)
+  end)
+end
+
+--- Run an OpenCode custom command (`.opencode/commands/*.md`) in the current
+--- session, creating one when needed.
+---
+--- `name` is the command without the leading `/`; `text` is its argument string
+--- (`$ARGUMENTS`/`$1` are expanded by the server).
+---@param name string
+---@param text string
+---@param opts? { files?: table[], agents?: table[], delivery?: string, new_session?: boolean, on_session?: fun(info: table) }
+function M.command(name, text, opts, cb)
+  opts = opts or {}
+  M.ensure({ force = opts.new_session }, function(err, info)
+    if err then
+      if cb then cb(err) end
+      return
+    end
+    if opts.on_session then pcall(opts.on_session, info) end
+
+    local function send()
+      local body = { name = name, text = text or "" }
+      if opts.files and #opts.files > 0 then body.files = opts.files end
+      if opts.agents and #opts.agents > 0 then body.agents = opts.agents end
+      if opts.delivery then body.delivery = opts.delivery end
+      api.run_command(info.id, body, function(command_err, inbox)
+        if cb then cb(command_err, inbox, info) end
+      end)
+    end
+
+    if sse.connected() then return send() end
+    sse.ensure(function(stream_err)
+      if stream_err then log.warn("event stream: " .. tostring(stream_err)) end
+      send()
+    end)
+  end)
+end
+
+--- Run a shell command in the current session, creating one when needed. The
+--- server emits `session.shell.started`/`session.shell.ended` with the output.
+---@param command string
+---@param opts? { new_session?: boolean }
+function M.shell(command, opts, cb)
+  opts = opts or {}
+  M.ensure({ force = opts.new_session }, function(err, info)
+    if err then
+      if cb then cb(err) end
+      return
+    end
+    api.shell_command(info.id, command, function(shell_err, shell)
+      if cb then cb(shell_err, shell, info) end
     end)
   end)
 end

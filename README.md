@@ -44,6 +44,8 @@ before `setup()`.
 | `:OpencodeNew` / `:OpencodeAttach {id}` / `:OpencodeSessions` | new · attach · pick a session |
 | `:OpencodeModels` / `:OpencodeAgents` | pick the model / agent |
 | `:OpencodeApproval` / `:OpencodeApprovalAgent` / `:OpencodePermissions` | approval status · create the approval agent · decide pending permissions |
+| `:OpencodeCommands` / `:OpencodeSubagents` | pick a slash command · mention a subagent |
+| `:OpencodeShell [cmd]` / `:OpencodeShells` | run · list shell commands |
 | `:OpencodeQuestion` | show the waiting question (digit picks, `o` types, `<Esc>` later; multiselect toggles with `<Tab>`/digits) |
 | `:OpencodeFocus` / `:OpencodeWindow` | move the cursor · return to the open window |
 | `:OpencodeImage [path]` | paste the clipboard image (or attach a file) to the next prompt |
@@ -55,7 +57,9 @@ before `setup()`.
 - **Context.** `:'<,'>OpencodeAsk`, or asking on a line, sends the file, cursor,
   selection, filetype, `modified` flag and diagnostic count. `@this`,
   `@buffer`, `@buffers`, `@diagnostics`, `@diff` are optional markers; typing
-  `@` in the prompt opens a menu describing each one.
+  `@` in the prompt opens a menu describing each one. Add your own with
+  `context.placeholders` (see the help): a `word`, a `menu` label and an
+  `expand(opts)` function (or a static `text`).
 - **Edits.** `:'<,'>OpencodeEdit` describes a change; `<CR>` approves the diff,
   writes the file and reloads the buffer keeping your cursor (`u` undoes).
   `:OpencodeActions` offers explain, find bugs, tests, refactor, docs, commit.
@@ -63,6 +67,11 @@ before `setup()`.
   opens the diff (`u` undoes the turn, `<CR>` keeps it), or set
   `approval = { review = "popup" }`. Undo needs git; otherwise the diff falls
   back to the working tree.
+- **Commands, subagents, shell.** Type `/` at the start of the prompt to run a
+  custom command (`/review`, `/init`, ...), `@explore` to mention a subagent
+  (sent as an `agents` attachment), or `!ls -la` to run a shell command in the
+  session. `:OpencodeCommands`, `:OpencodeSubagents`, `:OpencodeShell` and
+  `:OpencodeShells` do the same without typing.
 - **Images.** Like the TUI, `<C-v>` in the prompt pastes a clipboard image, and
   `:OpencodeImage [path]` attaches a PNG/JPEG/GIF/WebP. A `[Image N]` marker goes
   into the prompt and the image rides along as a `data:` URL (the model needs

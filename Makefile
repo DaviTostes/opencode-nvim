@@ -8,6 +8,7 @@ test: lint
 	$(NVIM) -l tests/sse_spec.lua
 	$(NVIM) -l tests/form_spec.lua
 	$(NVIM) -l tests/paste_spec.lua
+	$(NVIM) -l tests/catalog_spec.lua
 	$(NVIM) -l tests/panel_spec.lua
 
 e2e:

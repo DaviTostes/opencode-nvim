@@ -11,6 +11,7 @@ CONTENTS					*opencode-nvim-contents*
   5. Commands .................................... |opencode-nvim-commands|
   6. Keymaps (none are set by default) ........... |opencode-nvim-keymaps|
   7. Context (@this, @buffer, ...) ............... |opencode-nvim-context|
+  7b. Commands, subagents and shell ............. |opencode-nvim-integrations|
   8. Approval and diff ........................... |opencode-nvim-approval|
   9. Lua API ..................................... |opencode-nvim-api|
   10. Events ..................................... |opencode-nvim-events|
@@ -97,6 +98,7 @@ Without calling `setup()` the plugin configures itself with the defaults on
       max_bytes = 204800,      -- limit for attaching an unsaved buffer
       diff_max_lines = 300,
       diagnostics_max = 50,
+      placeholders = {},       -- your own @markers (see |opencode-nvim-context|)
     },
     reload = { enabled = true, set_autoread = true },
     ui = {
@@ -210,6 +212,21 @@ reloads keeping your cursor, and `u` still undoes it.
 	Create the approval agent in the global OpenCode config.
 :OpencodePermissions				*:OpencodePermissions*
 	Decide permissions that were left for later (the turn stays paused).
+:OpencodeCommands				*:OpencodeCommands*
+	Pick a custom command (`.opencode/commands/*.md`) and pre-fill the prompt
+	with `/name `. Add the arguments and press <CR> to run it. You can also
+	type `/` at the start of the prompt: a menu lists the commands.
+:OpencodeSubagents				*:OpencodeSubagents*
+	Pick a subagent and pre-fill the prompt with its `@mention`. When the
+	prompt is sent the subagent rides along as an `agents` attachment, so the
+	agent delegates to it. Typing `@` in the prompt lists the subagents too.
+:OpencodeShell {cmd}				*:OpencodeShell*
+	Run a shell command in the session (the TUI `!cmd`). Without an argument
+	the prompt is pre-filled with `!` so the command can be typed. Output is
+	streamed into the panel.
+:OpencodeShells					*:OpencodeShells*
+	List the shell commands run in the current session (newest first) and
+	show the output of the chosen one.
 :OpencodeQuestion				*:OpencodeQuestion*
 	Show the question that is waiting for an answer. The `question` tool does not
 	print anything: it creates a form, and the plugin turns it into a picker where
@@ -275,8 +292,14 @@ Inside the prompt:
   <BS>		right after a `[Pasted ~N lines]` marker, delete the whole marker
   <C-x><C-o>	complete files and placeholders (@this, @buffer, ...)
   @		typing `@` opens the placeholder menu with a description of
-		each one (@this, @buffer, @buffers, @diagnostics, @diff);
-		paths complete as plain text, without the `@`
+		each one (@this, @buffer, @buffers, @diagnostics, @diff) plus the
+		subagents a prompt can mention (@explore, @general, ...); paths
+		complete as plain text, without the `@`
+  /		typing `/` at the very start of the prompt opens the custom
+		command menu; picking one writes `/name ` so the arguments can
+		follow
+  !		a prompt starting with `!` runs a shell command in the session
+		instead of sending it to the model (`!ls -la`)
   <C-Up>, <C-Down>	history of prompts (normal mode: <C-p>, <C-n>)
   <C-v>		paste an image from the system clipboard (falls back to the
 		normal <C-v> when the clipboard has no image)
@@ -325,6 +348,59 @@ Example: `@this turn this into a local function`.
 
 With `context.auto = true`, opening the prompt from a visual selection already
 pre-fills `@this ` at the start of the text.
+
+Add your own markers with `context.placeholders`. They show up in the `@` menu
+and expand before sending, exactly like the built-ins: >
+
+  require("opencode-nvim").setup({
+    context = {
+      placeholders = {
+        {
+          word = "@todo",                   -- the marker you type
+          menu = "the TODOs in the project", -- shown in the menu
+          info = "runs `rg TODO` in the session directory",
+          expand = function(opts)
+            local dir = opts.directory or vim.uv.cwd()
+            local out = vim.fn.systemlist({ "rg", "TODO", dir })
+            return "```\n" .. table.concat(out, "\n") .. "\n```"
+          end,
+        },
+        -- A static expansion is just `text`:
+        { word = "@rule", text = "Follow the rules in AGENTS.md." },
+      },
+    },
+  })
+<
+`expand(opts, files)` gets `{ bufnr, line, selection, range, directory, auto }`
+(the same table and attachment list the built-ins receive) and returns the
+replacement text; return a second table to attach files (each item is a
+`{ uri = ..., name = ... }` attachment), or push onto `files` directly. A word
+equal to a built-in (`@this`, ...) replaces it. Names may use letters, digits,
+`_` and `-`.
+
+==============================================================================
+7b. Commands, subagents and shell		*opencode-nvim-integrations*
+
+Custom commands. OpenCode custom commands (`.opencode/commands/*.md`, or the
+global `~/.config/opencode/commands/`) can be run from the panel. Type `/` at
+the very start of the prompt and the menu lists them; the text after the name
+becomes the command arguments (`$ARGUMENTS`, `$1`, ...). `:OpencodeCommands`
+does the same through a picker. A `/name` that is not a known command is sent
+as an ordinary prompt.
+
+Subagents. An agent defined with `"mode": "subagent"` is invoked by mentioning
+it in the prompt: `@explore find the parser`. Typing `@` lists the subagents
+next to the placeholders, and `:OpencodeSubagents` picks one. The mention is
+sent together with an `agents` attachment, so the main agent delegates to it.
+Subagents cannot be *selected* as the session agent (`:OpencodeAgents` only
+lists primary agents): they are always reached through a mention or a `task`
+tool call.
+
+Shell. A prompt starting with `!` runs the rest as a shell command in the
+session (the TUI `!cmd`), for example `!ls -la`. The command and its output are
+written into the panel as they stream. `:OpencodeShell {cmd}` runs one without
+opening the prompt, and `:OpencodeShells` lists the shell commands run in the
+session so the output of a past one can be read.
 
 ==============================================================================
 8. Approval and diff				*opencode-nvim-approval*

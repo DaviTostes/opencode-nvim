@@ -118,6 +118,15 @@ function M.create_commands()
     M.edit_this(M.range_from_args(args))
   end, { range = true, desc = "ask for a change in the selection (or file)" })
   command("OpencodePermissions", function() permission.select() end, { desc = "pending permissions" })
+  command("OpencodeCommands", function() M.select_command() end, { desc = "run an OpenCode slash command" })
+  command("OpencodeSubagents", function() M.select_subagent() end,
+    { desc = "mention a subagent in the next prompt" })
+  command("OpencodeShell", function(args)
+    local text = util.trim(args.args)
+    if text == "" then return M.ask("! ", nil, { fresh = true }) end
+    M.shell(text)
+  end, { nargs = "*", desc = "run a shell command in the session" })
+  command("OpencodeShells", function() M.select_shell() end, { desc = "show shell commands and their output" })
   command("OpencodeQuestion", function()
     form.sync(function(err)
       -- Bring back a question the user dismissed with <Esc> even when the
@@ -461,6 +470,107 @@ function M.select_agent()
         if session.info() then session.info().agent = map[choice] end
         log.notify("agent: " .. map[choice])
       end)
+    end)
+  end)
+end
+
+--- Pick a custom command. Its `/name` is typed into the prompt so arguments can
+--- follow before sending.
+function M.select_command()
+  local catalog = require("opencode-nvim.catalog")
+  catalog.commands(function(err, list)
+    if err then return fail("commands", err) end
+    if type(list) ~= "table" or #list == 0 then return log.notify("no commands") end
+    local items, map = {}, {}
+    for _, command in ipairs(list) do
+      if type(command) == "table" and type(command.name) == "string" then
+        local label = command.name .. (command.description and ("  " .. command.description) or "")
+        if not map[label] then
+          items[#items + 1] = label
+          map[label] = command.name
+        end
+      end
+    end
+    table.sort(items)
+    picker.pick(items, { name = "opencode commands" }, function(choice)
+      if not choice then return end
+      M.ask("/" .. map[choice] .. " ", nil, { fresh = true })
+    end)
+  end)
+end
+
+--- Pick a subagent. Its `@mention` is typed into the prompt and rides along as
+--- an `agents` attachment when the prompt is sent (see `panel.mentioned_agents`).
+function M.select_subagent()
+  local catalog = require("opencode-nvim.catalog")
+  catalog.agents(function(err, list)
+    if err then return fail("subagents", err) end
+    local items, map = {}, {}
+    for _, agent in ipairs(list or {}) do
+      if type(agent) == "table" then
+        local id = agent.id or agent.name
+        local mode = agent.mode or agent.type
+        if id and (mode == "subagent" or mode == "all") and not agent.hidden then
+          local label = id .. (agent.description and ("  " .. agent.description) or "")
+          if not map[label] then
+            items[#items + 1] = label
+            map[label] = id
+          end
+        end
+      end
+    end
+    if #items == 0 then return log.notify("no subagents available") end
+    table.sort(items)
+    picker.pick(items, { name = "subagents (mentioned with @)" }, function(choice)
+      if not choice then return end
+      M.ask("@" .. map[choice] .. " ", nil, { fresh = true })
+    end)
+  end)
+end
+
+--- Run a shell command in the current session (the TUI `!cmd`).
+function M.shell(command)
+  M._autosetup()
+  panel.send_shell(command)
+end
+
+--- List the shell commands run in the current session (newest first) and show
+--- the output of the chosen one.
+function M.select_shell()
+  local id = session.id()
+  if not id then return log.notify("no active session") end
+  api.messages(id, { limit = 50, order = "desc" }, function(err, page)
+    if err then return fail("shells", err) end
+    local items, map = {}, {}
+    for _, message in ipairs((type(page) == "table" and page.data) or {}) do
+      if type(message) == "table" and message.type == "shell" and message.command then
+        local label = string.format("%-8s %s", tostring(message.status), tostring(message.command))
+        if #label > 90 then label = label:sub(1, 87) .. "..." end
+        if not map[label] then
+          items[#items + 1] = label
+          map[label] = message
+        end
+      end
+    end
+    if #items == 0 then return log.notify("no shell commands in this session") end
+    picker.pick(items, { name = "shell commands (newest first)" }, function(choice)
+      if not choice then return end
+      local message = map[choice]
+      local output = message.output and message.output.output or ""
+      local lines = {
+        "$ " .. tostring(message.command),
+        string.format("status: %s  exit: %s", tostring(message.status), tostring(message.exit)),
+        "",
+      }
+      vim.list_extend(lines, util.lines(output))
+      if message.shellID then
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "shell: " .. tostring(message.shellID)
+      end
+      require("opencode-nvim.ui.diff").text({
+        title = "shell · " .. tostring(message.shellID or "?"),
+        lines = lines,
+      })
     end)
   end)
 end

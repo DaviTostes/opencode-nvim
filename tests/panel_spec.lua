@@ -649,6 +649,67 @@ test("context.auto tells the model what 'this' means", function()
   vim.api.nvim_buf_delete(buf, { force = true })
 end)
 
+test("custom @ placeholders expand and show up in the menu", function()
+  local cfg = require("opencode-nvim.config")
+  local context = require("opencode-nvim.context")
+
+  local buf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(buf, vim.fs.joinpath(vim.uv.cwd(), "custom.lua"))
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "local x = 1" })
+
+  local saved = cfg.get().context.placeholders
+  cfg.get().context.placeholders = {
+    { word = "@rule", menu = "project rules", text = "Follow AGENTS.md." },
+    { word = "echo", expand = function(opts) return "ECHOED:" .. tostring(opts.bufnr == buf) end },
+    { word = "@attach", expand = function()
+        return "see attachment", { { uri = "data:text/plain;base64,Zm9v", name = "foo.txt" } }
+      end },
+    -- an override of a built-in
+    { word = "@diff", text = "CUSTOM DIFF" },
+    -- invalid entries are skipped, not fatal
+    { menu = "no word" },
+    { word = "@broken" },
+  }
+
+  -- static `text`
+  cfg.get().context.auto = false
+  local text = context.expand("obey @rule please", { bufnr = buf })
+  assert(text:find("Follow AGENTS.md.", 1, true), text)
+  assert(not text:find("@rule", 1, true), text)
+
+  -- `expand()` runs with the prompt opts; a bare `word` (no `@`) is accepted
+  local echo = context.expand("@echo", { bufnr = buf })
+  assert(echo:find("ECHOED:true", 1, true), echo)
+
+  -- a second return value is attached as a file
+  local attach, files = context.expand("@attach", { bufnr = buf })
+  assert(attach:find("see attachment", 1, true), attach)
+  assert(#files == 1 and files[1].name == "foo.txt", vim.inspect(files))
+
+  -- a custom word replaces the built-in
+  local overridden = context.expand("@diff", { bufnr = buf })
+  assert(overridden:find("CUSTOM DIFF", 1, true), overridden)
+
+  -- an entry with no word, or no expand/text, is not a placeholder
+  local broken = context.expand("@broken here", { bufnr = buf })
+  assert(broken:find("@broken", 1, true), broken)
+
+  -- an explicit custom marker suppresses the automatic editor context
+  cfg.get().context.auto = true
+  local explicit = context.expand("@rule", { bufnr = buf })
+  assert(not explicit:find("[editor context]", 1, true), explicit)
+
+  -- the `@` menu lists them next to the built-ins
+  local words = {}
+  for _, item in ipairs(panel.placeholder_items("@r")) do words[item.word] = true end
+  assert(words["@rule"], "the custom placeholder is missing from the menu")
+  assert(panel.placeholder_items("@th")[1].word == "@this", "the built-ins must stay listed")
+
+  cfg.get().context.placeholders = saved
+  cfg.get().context.auto = true
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
 test("actions are one pick away", function()
   assert(vim.fn.exists(":OpencodeActions") == 2)
   assert(vim.fn.exists(":OpencodeEdit") == 2)
@@ -1107,6 +1168,31 @@ test("the panel follows the end while you are typing", function()
   assert(ok, err)
   assert(views > 0, "the view never followed while inserting (deferred to InsertLeave)")
   assert(at_bottom(), "the panel did not follow the end while inserting")
+  plugin.close()
+end)
+
+test("a long wrapped final line is scrolled to its end", function()
+  -- Regression: following was decided from the line *number* alone. The panel
+  -- wraps, so a final paragraph long enough to wrap was already reported as the
+  -- last line (`w$`) while its tail sat below the viewport — the answer looked
+  -- cut. Only long answers end in such a line, which is why it hit them only.
+  plugin.open({ input = false })
+  plugin.clear()
+  settle()
+  for index = 1, 3 do
+    feed("session.text.delta", { delta = "short " .. index .. "\n" })
+  end
+  local words = {}
+  for index = 1, 300 do words[index] = "palavra" .. index end
+  feed("session.text.delta", { delta = table.concat(words, " ") })
+  settle()
+
+  local win, buf = panel.state.win, panel.state.buf
+  local last = vim.api.nvim_buf_line_count(buf)
+  local line = vim.api.nvim_buf_get_lines(buf, last - 1, last, false)[1]
+  assert(#line > vim.api.nvim_win_get_width(win), "the final line did not wrap")
+  local row = vim.fn.screenpos(win, last, #line).row
+  assert(row ~= 0, "the tail of the final wrapped line is off screen")
   plugin.close()
 end)
 

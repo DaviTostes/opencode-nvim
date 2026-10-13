@@ -309,12 +309,60 @@ function M.location(cb)
   data({ method = "GET", path = "/api/location" }, cb)
 end
 
-function M.commands(cb)
-  data({ method = "GET", path = "/api/command" }, cb)
+--- Custom commands defined for a location (`.opencode/commands/*.md`).
+---
+--- Accepts `(cb)` for the default location or `(directory, cb)` to scope the
+--- list to a project.
+---@param directory? string
+---@param cb fun(err: any, commands: { name: string, description?: string }[]?)
+function M.commands(directory, cb)
+  if type(directory) == "function" then cb, directory = directory, nil end
+  local path = "/api/command"
+  if directory then
+    path = path .. "?location%5Bdirectory%5D=" .. vim.uri_encode(directory)
+  end
+  data({ method = "GET", path = path }, cb)
 end
 
+--- Run a custom command in a session. `text` is the command's argument string.
+---@param body { name: string, text: string, files?: table[], agents?: table[], skills?: table[], delivery?: string }
 function M.run_command(id, body, cb)
   data({ method = "POST", path = "/api/session/" .. id .. "/command", body = body, timeout = 60000 }, cb)
+end
+
+--- Run a shell command in a session (the TUI `!cmd` prompt). The server answers
+--- with an empty body and streams `session.shell.*` events.
+function M.shell_command(id, command, cb)
+  data({
+    method = "POST",
+    path = "/api/session/" .. id .. "/shell",
+    body = { command = command },
+    timeout = 60000,
+  }, cb)
+end
+
+--- Shell commands known to a location (running and recent).
+---@param directory? string
+function M.shells(directory, cb)
+  local path = "/api/shell"
+  if directory then
+    path = path .. "?location%5Bdirectory%5D=" .. vim.uri_encode(directory)
+  end
+  data({ method = "GET", path = path }, cb)
+end
+
+function M.shell(id, cb)
+  data({ method = "GET", path = "/api/shell/" .. id }, cb)
+end
+
+--- Output of a shell command. `params` may carry a `cursor` for incremental reads.
+function M.shell_output(id, params, cb)
+  if type(params) == "function" then cb, params = params, nil end
+  data({ method = "GET", path = "/api/shell/" .. id .. "/output" .. util.query(params) }, cb)
+end
+
+function M.remove_shell(id, cb)
+  data({ method = "DELETE", path = "/api/shell/" .. id }, cb)
 end
 
 ---@param options? table

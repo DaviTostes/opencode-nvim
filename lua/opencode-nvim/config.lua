@@ -54,6 +54,13 @@ M.defaults = {
     max_bytes = 200 * 1024,
     diff_max_lines = 300,
     diagnostics_max = 50,
+    -- Custom `@` placeholders, shown in the prompt menu next to the built-ins
+    -- and expanded before sending. Each entry is either
+    --   { word = "@name", menu = "...", info = "...", expand = function(opts) ... end }
+    -- or { word = "@name", text = "..." } for a static expansion. `expand`
+    -- receives the same `opts` as `context.expand` and may return
+    -- `text, files` to attach files. A word equal to a built-in replaces it.
+    placeholders = {},
   },
   reload = {
     enabled = true,

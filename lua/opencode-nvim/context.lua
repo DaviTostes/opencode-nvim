@@ -4,8 +4,9 @@ local util = require("opencode-nvim.util")
 
 --- Turns editor state into prompt text and file attachments.
 ---
---- Supported placeholders in a prompt: `@this`, `@buffer`, `@buffers`,
---- `@diagnostics` and `@diff`.
+--- Built-in placeholders in a prompt: `@this`, `@buffer`, `@buffers`,
+--- `@diagnostics` and `@diff`. More can be added, or a built-in replaced,
+--- through `context.placeholders` (see `M.placeholder_list`).
 local M = {}
 
 --- Visual range (1-based, inclusive) captured when the prompt was opened.
@@ -142,16 +143,6 @@ local function fmt_diff(opts)
   return "```diff\n" .. table.concat(lines, "\n") .. "\n```"
 end
 
---- Real placeholder names, so `@param` (a Lua annotation, an email, ...) is not
---- mistaken for an explicit placeholder.
-local PLACEHOLDER_NAMES = {
-  this = true,
-  buffer = true,
-  buffers = true,
-  diagnostics = true,
-  diff = true,
-}
-
 --- `@` starts a placeholder only at the beginning of the text or after a
 --- non-word character: `user@example.com` is not a placeholder.
 local function at_boundary(text, at)
@@ -159,22 +150,135 @@ local function at_boundary(text, at)
   return text:sub(at - 1, at - 1):match("[%w_]") == nil
 end
 
+--- Built-in `@` placeholders: the menu entry plus how the marker expands.
+---
+--- `expand(opts, files)` returns the replacement text; it may push attachments
+--- onto `files`. An entry of `context.placeholders` whose word matches one of
+--- these replaces it.
+local BUILTINS = {
+  { word = "@this", menu = "file or selection at the cursor",
+    info = "the file (and selection) the cursor is in", expand = fmt_this },
+  { word = "@buffer", menu = "the current buffer",
+    info = "the current buffer; attached as a file when it has unsaved changes", expand = fmt_buffer },
+  { word = "@buffers", menu = "the open buffers",
+    info = "the list of open, listed buffers", expand = fmt_buffers },
+  { word = "@diagnostics", menu = "diagnostics at the cursor",
+    info = "the diagnostics of the file (or the selection), one per line", expand = fmt_diagnostics },
+  { word = "@diff", menu = "the working tree diff",
+    info = "`git diff` of the session directory", expand = fmt_diff },
+}
+
+--- Bare name of a configured word (`"@todo"` and `"todo"` both give `"todo"`),
+--- or nil when it is not a string that can follow the `@`.
+---@param word any
+---@return string?
+local function placeholder_name(word)
+  if type(word) ~= "string" then return nil end
+  return word:match("^@?([%w_%-]+)$")
+end
+
+-- A malformed `context.placeholders` entry is skipped. Warn about each problem
+-- once: `placeholder_list` is rebuilt on every keystroke, and repeating the same
+-- message would drown the log.
+local warned = {}
+local function warn_once(key, message)
+  if warned[key] then return end
+  warned[key] = true
+  log.warn(message)
+end
+
+--- Every `@` placeholder: the built-ins first, then the custom ones from
+--- `context.placeholders`. A custom word replaces the built-in of the same name.
+---
+--- Built fresh on every call (expansions and completion run on every keystroke),
+--- never cached: `setup()` may replace `context.placeholders` at any time.
+---
+--- A custom entry is `{ word = "@name", menu = "...", info = "...", expand = fn }`,
+--- where `expand(opts, files)` returns the replacement text (and may return a
+--- second table of file attachments). `text = "..."` is shorthand for a static
+--- expansion, and `info`/`menu` default sensibly when omitted.
+---@return table[]
+function M.placeholder_list()
+  local list, index = {}, {}
+  for _, entry in ipairs(BUILTINS) do
+    index[entry.word] = #list + 1
+    list[#list + 1] = entry
+  end
+  for _, entry in ipairs(cfg.get().context.placeholders or {}) do
+    if type(entry) ~= "table" then
+      warn_once("nontable:" .. tostring(entry), "context.placeholders: skipped a non-table entry")
+    else
+      local name = placeholder_name(entry.word or entry.name)
+      if not name then
+        warn_once("noword:" .. tostring(entry.word or entry.name),
+          "context.placeholders: skipped an entry with no valid word")
+      else
+        local expand = entry.expand
+        if expand == nil and entry.text ~= nil then
+          expand = function() return entry.text end
+        end
+        if type(expand) ~= "function" then
+          warn_once("noexpand:" .. name,
+            "context.placeholders: @" .. name .. " has no `expand` or `text`; skipped")
+        else
+          local item = {
+            word = "@" .. name,
+            menu = entry.menu or entry.description or "custom placeholder",
+            info = entry.info,
+            expand = expand,
+          }
+          local at = index[item.word]
+          if at then
+            list[at] = item
+          else
+            index[item.word] = #list + 1
+            list[#list + 1] = item
+          end
+        end
+      end
+    end
+  end
+  return list
+end
+
+--- Placeholder entry by bare name, or nil.
+---@param name string
+---@return table?
+function M.find_placeholder(name)
+  for _, entry in ipairs(M.placeholder_list()) do
+    if entry.word == "@" .. name then return entry end
+  end
+  return nil
+end
+
+--- Bare name -> entry map, so expansion does not rebuild the list per `@`.
+---@return table<string, table>
+local function placeholder_map()
+  local map = {}
+  for _, entry in ipairs(M.placeholder_list()) do
+    map[entry.word:sub(2)] = entry
+  end
+  return map
+end
+
 --- The first well-formed placeholder in `text`, if any.
 ---@param text string
 ---@return boolean
 function M.has_placeholder(text)
+  local map = placeholder_map()
   local at = 1
   while true do
     at = text:find("@", at, true)
     if not at then return false end
-    local name = text:match("^@(%w+)", at)
-    if name and PLACEHOLDER_NAMES[name] and at_boundary(text, at) then return true end
+    local name = text:match("^@([%w_%-]+)", at)
+    if name and map[name] and at_boundary(text, at) then return true end
     at = at + 1
   end
 end
 
 --- Replace the placeholders in `text`, appending attachments to `files`.
 local function expand_placeholders(text, opts, files)
+  local map = placeholder_map()
   local out = {}
   local pos = 1
   while true do
@@ -184,19 +288,18 @@ local function expand_placeholders(text, opts, files)
       break
     end
 
-    local name = text:match("^@(%w+)", at)
+    local name = text:match("^@([%w_%-]+)", at)
     local replacement
     if name and at_boundary(text, at) then
-      if name == "this" then
-        replacement = fmt_this(opts)
-      elseif name == "buffer" then
-        replacement = fmt_buffer(opts, files)
-      elseif name == "buffers" then
-        replacement = fmt_buffers(opts)
-      elseif name == "diagnostics" then
-        replacement = fmt_diagnostics(opts)
-      elseif name == "diff" then
-        replacement = fmt_diff(opts)
+      local entry = map[name]
+      if entry and type(entry.expand) == "function" then
+        local ok, value, extra = pcall(entry.expand, opts, files)
+        if not ok then
+          log.warn("placeholder @" .. name .. " failed: " .. tostring(value))
+        elseif value ~= nil then
+          replacement = type(value) == "string" and value or tostring(value)
+          if type(extra) == "table" then vim.list_extend(files, extra) end
+        end
       end
     end
 
@@ -250,8 +353,11 @@ end
 --- A placeholder only counts when its `@` starts a token (beginning of the text
 --- or after a non-word character), so an email like `user@this.com` is left
 --- untouched instead of being spliced with a code fence.
+---
+--- `opts.auto` overrides `context.auto`: pass `false` for text that must stay
+--- verbatim apart from explicit placeholders (a slash command's arguments).
 ---@param text string
----@param opts? { bufnr?: integer, selection?: table, range?: table, directory?: string }
+---@param opts? { bufnr?: integer, selection?: table, range?: table, directory?: string, auto?: boolean }
 ---@return string text
 ---@return table[] files
 function M.expand(text, opts)
@@ -266,7 +372,9 @@ function M.expand(text, opts)
 
   -- With `context.auto` a plain sentence carries the editor context, so the
   -- model knows which file/selection "this" means. Explicit placeholders win.
-  if cfg.get().context.auto and not explicit then
+  local auto = opts.auto
+  if auto == nil then auto = cfg.get().context.auto end
+  if auto and not explicit then
     local parts = {}
     local header = M.header(opts)
     if header then parts[#parts + 1] = header end
